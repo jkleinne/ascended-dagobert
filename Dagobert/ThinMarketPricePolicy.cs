@@ -46,7 +46,7 @@ internal static class ThinMarketPricePolicy
     if (!IsAveragePriceCredible(averagePrice, options, now, out var credibilityReason))
       return new ThinMarketPricingDecision(ThinMarketPricingAction.Skip, 0, credibilityReason);
 
-    var average = averagePrice.Value.UnitPrice;
+    var average = averagePrice.GetValueOrDefault().UnitPrice;
     if (listingCount == 0)
       return new ThinMarketPricingDecision(
         ThinMarketPricingAction.UseAverage,

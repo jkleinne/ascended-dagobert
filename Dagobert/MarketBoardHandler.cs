@@ -308,11 +308,11 @@ namespace Dagobert
         if (target is null)
           return null;
 
-        var competitorPrice = _bufferedListings[target.Value].PricePerUnit;
-        var selectedPrice = Undercut(competitorPrice);
+        var selfUndercutCompetitorPrice = _bufferedListings[target.Value].PricePerUnit;
+        var selfUndercutSelectedPrice = Undercut(selfUndercutCompetitorPrice);
         return new PricingDecisionResult(
-          selectedPrice,
-          BuildUndercutDebug(competitorPrice, selectedPrice));
+          selfUndercutSelectedPrice,
+          BuildUndercutDebug(selfUndercutCompetitorPrice, selfUndercutSelectedPrice));
       }
 
       var competitors = hqEligible
