@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Net.Http;
 using Dalamud.Game.Command;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.IoC;
@@ -18,13 +20,19 @@ public sealed class Plugin : IDalamudPlugin
   [PluginService] public static IKeyState KeyState { get; private set; } = null!;
   [PluginService] public static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
   [PluginService] public static IChatGui ChatGui { get; private set; } = null!;
+  [PluginService] public static IClientState ClientState { get; private set; } = null!;
+  [PluginService] public static IGameInteropProvider GameInteropProvider { get; private set; } = null!;
+  [PluginService] public static IPluginLog Log { get; private set; } = null!;
 
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
   public static Configuration Configuration { get; private set; } // will never be null
   public static DalamudLinkPayload ConfigLinkPayload { get; private set; } = null!;
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
 
+  private static readonly TimeSpan UniversalisTimeout = TimeSpan.FromSeconds(4);
   private readonly AutoPinch _autoPinch;
+  private readonly HttpClient _universalisHttpClient;
+  private readonly MarketBoardRequestTracker _marketBoardRequestTracker;
 
   public readonly WindowSystem WindowSystem = new("Ascended Dagobert");
   private ConfigWindow ConfigWindow { get; init; }
@@ -49,7 +57,10 @@ public sealed class Plugin : IDalamudPlugin
     PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUI;
 
     ECommonsMain.Init(PluginInterface, this);
-    _autoPinch = new AutoPinch();
+    _universalisHttpClient = CreateUniversalisHttpClient();
+    var averagePriceProvider = new UniversalisAveragePriceProvider(_universalisHttpClient, Log);
+    _marketBoardRequestTracker = new MarketBoardRequestTracker(GameInteropProvider, Log);
+    _autoPinch = new AutoPinch(averagePriceProvider, _marketBoardRequestTracker);
     WindowSystem.AddWindow(_autoPinch);
   }
 
@@ -57,6 +68,8 @@ public sealed class Plugin : IDalamudPlugin
   {
     WindowSystem.RemoveAllWindows();
     _autoPinch.Dispose();
+    _marketBoardRequestTracker.Dispose();
+    _universalisHttpClient.Dispose();
     CommandManager.RemoveHandler("/dagobert");
     ECommonsMain.Dispose();
   }
@@ -86,4 +99,18 @@ public sealed class Plugin : IDalamudPlugin
   }
 
   public void ToggleConfigUI() => ConfigWindow.Toggle();
+
+  private static HttpClient CreateUniversalisHttpClient()
+  {
+    var httpClient = new HttpClient
+    {
+      BaseAddress = new Uri("https://universalis.app/api/v2/"),
+      Timeout = UniversalisTimeout
+    };
+
+    httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
+      $"{PluginInterface.InternalName}/{PluginInterface.Manifest.AssemblyVersion}");
+
+    return httpClient;
+  }
 }

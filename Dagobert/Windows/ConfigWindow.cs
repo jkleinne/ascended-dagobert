@@ -117,6 +117,7 @@ public sealed class ConfigWindow : Window
     }
 
     DrawBaitGuardSection();
+    DrawThinMarketSection();
 
     ImGui.Separator();
 
@@ -587,6 +588,108 @@ public sealed class ConfigWindow : Window
                        "at once to pull the median floor down. With Min Quantity = 1, that attack defeats the\r\n" +
                        "floor filter. Setting this above 1 on stack-sold items (mats, food, materia) closes\r\n" +
                        "that gap.");
+      ImGui.EndTooltip();
+    }
+
+    ImGui.Unindent();
+  }
+
+  private static void DrawThinMarketSection()
+  {
+    if (!ImGui.CollapsingHeader("Thin Market Average Fallback"))
+      return;
+
+    ImGui.Indent();
+
+    var enabled = Plugin.Configuration.EnableThinMarketAverageFallback;
+    if (ImGui.Checkbox("Enable Average Fallback", ref enabled))
+    {
+      Plugin.Configuration.EnableThinMarketAverageFallback = enabled;
+      Plugin.Configuration.Save();
+    }
+    if (ImGui.IsItemHovered())
+    {
+      ImGui.BeginTooltip();
+      ImGui.SetTooltip("If checked, thin markets can use the Universalis average sale price from your home world.\r\n" +
+                       "No listings uses the average directly. One or two listings only undercut when the floor is close to that average.");
+      ImGui.EndTooltip();
+    }
+
+    if (!enabled)
+    {
+      ImGui.Unindent();
+      return;
+    }
+
+    ImGui.BeginGroup();
+    ImGui.Text("Max Listings:");
+    ImGui.SameLine();
+    int maxListings = Plugin.Configuration.ThinMarketMaxListings;
+    if (ImGui.SliderInt("##thinMarketMaxListings", ref maxListings, 0, 5))
+    {
+      Plugin.Configuration.ThinMarketMaxListings = maxListings;
+      Plugin.Configuration.Save();
+    }
+    ImGui.EndGroup();
+    if (ImGui.IsItemHovered())
+    {
+      ImGui.BeginTooltip();
+      ImGui.SetTooltip("How many competitor listings count as a thin market. Default 2.");
+      ImGui.EndTooltip();
+    }
+
+    ImGui.BeginGroup();
+    ImGui.Text("Average Tolerance:");
+    ImGui.SameLine();
+    float tolerance = Plugin.Configuration.ThinMarketAverageTolerancePercent;
+    if (ImGui.SliderFloat("##thinMarketAverageTolerance", ref tolerance, 1.0f, 100.0f, "%.1f"))
+    {
+      Plugin.Configuration.ThinMarketAverageTolerancePercent = MathF.Round(tolerance, 1);
+      Plugin.Configuration.Save();
+    }
+    ImGui.SameLine();
+    ImGui.Text("%");
+    ImGui.EndGroup();
+    if (ImGui.IsItemHovered())
+    {
+      ImGui.BeginTooltip();
+      ImGui.SetTooltip("For one or more listings, the current floor must be within this percent of the home world average sale price. Default 40%.");
+      ImGui.EndTooltip();
+    }
+
+    ImGui.BeginGroup();
+    ImGui.Text("Min Recent Sales:");
+    ImGui.SameLine();
+    int minSales = Plugin.Configuration.ThinMarketMinRecentSales;
+    if (ImGui.SliderInt("##thinMarketMinRecentSales", ref minSales, 1, 20))
+    {
+      Plugin.Configuration.ThinMarketMinRecentSales = minSales;
+      Plugin.Configuration.Save();
+    }
+    ImGui.EndGroup();
+    if (ImGui.IsItemHovered())
+    {
+      ImGui.BeginTooltip();
+      ImGui.SetTooltip("How many recent Universalis sale rows must exist before the average is trusted. Default 3.");
+      ImGui.EndTooltip();
+    }
+
+    ImGui.BeginGroup();
+    ImGui.Text("Max Sale Age:");
+    ImGui.SameLine();
+    int maxAgeDays = Plugin.Configuration.ThinMarketMaxSaleAgeDays;
+    if (ImGui.SliderInt("##thinMarketMaxSaleAgeDays", ref maxAgeDays, 1, 90))
+    {
+      Plugin.Configuration.ThinMarketMaxSaleAgeDays = maxAgeDays;
+      Plugin.Configuration.Save();
+    }
+    ImGui.SameLine();
+    ImGui.Text("days");
+    ImGui.EndGroup();
+    if (ImGui.IsItemHovered())
+    {
+      ImGui.BeginTooltip();
+      ImGui.SetTooltip("The newest Universalis sale row must be this recent before the average is trusted. Default 30 days.");
       ImGui.EndTooltip();
     }
 

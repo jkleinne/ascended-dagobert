@@ -32,10 +32,10 @@ namespace Dagobert
     private readonly TaskManager _taskManager;
     private Dictionary<string, int?> _cachedPrices = [];
 
-    public AutoPinch()
+    public AutoPinch(IAverageSalePriceProvider averagePriceProvider, MarketBoardRequestTracker marketBoardRequestTracker)
       : base("Ascended Dagobert", ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.AlwaysUseWindowPadding | ImGuiWindowFlags.AlwaysAutoResize, true)
     {
-      _mbHandler = new MarketBoardHandler();
+      _mbHandler = new MarketBoardHandler(averagePriceProvider, marketBoardRequestTracker);
       _mbHandler.NewPriceReceived += MBHandler_NewPriceReceived;
 
       // window
@@ -357,6 +357,7 @@ namespace Dagobert
       _taskManager.Enqueue(DelayMarketBoard, $"DelayMB{index}");
       _taskManager.Enqueue(ClickComparePrice, $"ClickComparePrice{index}");
       _taskManager.DelayNext(Plugin.Configuration.MarketBoardKeepOpenMS);
+      _taskManager.Enqueue(WaitForMarketPrice, $"WaitForMarketPrice{index}");
       _taskManager.Enqueue(SetNewPrice, $"SetNewPrice{index}");
     }
 
@@ -364,6 +365,7 @@ namespace Dagobert
     {
       // reverse order because we INSERT
       _taskManager.Insert(SetNewPrice, $"SetNewPrice{index}");
+      _taskManager.Insert(WaitForMarketPrice, $"WaitForMarketPrice{index}");
       _taskManager.InsertDelayNext(Plugin.Configuration.MarketBoardKeepOpenMS);
       _taskManager.Insert(ClickComparePrice, $"ClickComparePrice{index}");
       _taskManager.Insert(DelayMarketBoard, $"DelayMB{index}");
@@ -460,6 +462,7 @@ namespace Dagobert
         else
         {
           Svc.Log.Debug($"Clicking compare prices");
+          _mbHandler.PrepareForPriceRequest();
           ECommons.Automation.Callback.Fire(&addon->AtkUnitBase, true, 4);
           return true;
         }
@@ -549,8 +552,14 @@ namespace Dagobert
       {
         _taskManager.Enqueue(ClickComparePrice, $"ClickComparePricePosted");
         _taskManager.DelayNext(Plugin.Configuration.MarketBoardKeepOpenMS);
+        _taskManager.Enqueue(WaitForMarketPrice, $"WaitForMarketPricePosted");
         _taskManager.Enqueue(SetNewPrice, $"SetNewPricePosted");
       }
+    }
+
+    private bool? WaitForMarketPrice()
+    {
+      return _skipCurrentItem || !_mbHandler.IsPricePending;
     }
     private void RemoveTalkAddonListeners()
     {

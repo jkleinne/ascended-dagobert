@@ -52,6 +52,16 @@ public sealed class Configuration : IPluginConfiguration
 
   public int BaitGuardMinQuantity { get; set; } = 1;
 
+  public bool EnableThinMarketAverageFallback { get; set; } = true;
+
+  public int ThinMarketMaxListings { get; set; } = 2;
+
+  public int ThinMarketMinRecentSales { get; set; } = 3;
+
+  public int ThinMarketMaxSaleAgeDays { get; set; } = 30;
+
+  public float ThinMarketAverageTolerancePercent { get; set; } = 40.0f;
+
   public bool ShowPriceAdjustmentsMessages { get; set; } = true;
 
   public bool ShowRetainerNames { get; set; } = true;
