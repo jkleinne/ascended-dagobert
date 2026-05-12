@@ -32,6 +32,10 @@ The average is only trusted when Universalis returns at least `Min Recent Sales`
 
 Defaults: max 2 listings, 40% tolerance, 3 recent sales, 30-day sale age.
 
+### Pricing Debug
+
+Enable `Show Pricing Debug` in the config window when you want to see why a price was selected or skipped. Debug lines appear in chat and in the plugin log, including whether Universalis was consulted, the average sale price returned, recent sale count, newest sale age, current floor, and the selected target price.
+
 ## Upstream features
 
 Inherited unchanged from upstream:

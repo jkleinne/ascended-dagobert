@@ -33,17 +33,6 @@ namespace Dagobert
 
     public bool IsPricePending { get; private set; }
 
-    private int NewPrice
-    {
-      get => _newPrice;
-      set
-      {
-        _newPrice = value;
-        NewPriceReceived?.Invoke(this, new NewPriceEventArgs(NewPrice));
-      }
-    }
-    private int _newPrice;
-
     public event EventHandler<NewPriceEventArgs>? NewPriceReceived;
 
     public MarketBoardHandler(
@@ -96,7 +85,11 @@ namespace Dagobert
       if (!request.Ok)
       {
         Svc.Log.Warning($"Market board request failed with status {request.Status}");
-        FinishPriceRequest(-1);
+        FinishPriceRequest(NoPrice(new PricingDebugDetail(
+          PricingDebugReason.MarketBoardRequestFailed)
+        {
+          RequestStatus = request.Status.ToString()
+        }));
         return;
       }
 
@@ -104,9 +97,17 @@ namespace Dagobert
       if (request.AmountToArrive == 0)
       {
         var requestVersion = _requestVersion;
-        var price = await DecideThinMarketPriceAsync(new ThinMarketListingContext(0, null, null), requestVersion);
-        if (price is null && requestVersion == _requestVersion)
-          FinishPriceRequest(-1);
+        var result = await DecideThinMarketPriceAsync(new ThinMarketListingContext(0, null, null), requestVersion);
+        if (requestVersion != _requestVersion)
+          return;
+
+        FinishPriceRequest(result ?? NoPrice(BuildThinMarketDebug(
+          ThinMarketPricingAction.Skip,
+          ThinMarketPricingReason.FallbackDisabled,
+          new ThinMarketListingContext(0, null, null),
+          null,
+          BuildThinMarketOptions(),
+          0)));
       }
     }
 
@@ -117,7 +118,8 @@ namespace Dagobert
 
       if (currentOfferings.RequestId == _lastRequestId)
       {
-        FinishPriceRequest(-1);
+        FinishPriceRequest(NoPrice(new PricingDebugDetail(
+          PricingDebugReason.DuplicateMarketBoardRequest)));
         return;
       }
 
@@ -133,27 +135,56 @@ namespace Dagobert
 
       if (thinMarket.ListingCount <= Math.Max(0, Plugin.Configuration.ThinMarketMaxListings))
       {
-        var thinPrice = await DecideThinMarketPriceAsync(thinMarket, requestVersion);
-        if (thinPrice is not null)
-          return;
-
-        if (thinMarket.ListingCount > 0)
+        var thinResult = await DecideThinMarketPriceAsync(thinMarket, requestVersion);
+        if (thinResult is not null)
         {
-          FinishPriceRequest(-1);
+          FinishPriceRequest(thinResult.Value);
+          return;
+        }
+
+        if (!Plugin.Configuration.EnableThinMarketAverageFallback && thinMarket.ListingCount > 0)
+        {
+          FinishPriceRequest(NoPrice(BuildThinMarketDebug(
+            ThinMarketPricingAction.Skip,
+            ThinMarketPricingReason.FallbackDisabled,
+            thinMarket,
+            null,
+            BuildThinMarketOptions(),
+            0)));
           return;
         }
       }
 
       if (hqEligible.Count == 0)
       {
-        FinishPriceRequest(thinMarket.OwnLowestPrice is null ? -1 : (int)thinMarket.OwnLowestPrice.Value);
+        if (thinMarket.OwnLowestPrice is null)
+        {
+          FinishPriceRequest(NoPrice(new PricingDebugDetail(
+            PricingDebugReason.NoEligibleListings)
+          {
+            ListingCount = 0
+          }));
+          return;
+        }
+
+        FinishPriceRequest(new PricingDecisionResult(
+          (int)thinMarket.OwnLowestPrice.Value,
+          new PricingDebugDetail(PricingDebugReason.OwnPriceAlreadyLowest)
+          {
+            OwnLowestPrice = (int)thinMarket.OwnLowestPrice.Value,
+            SelectedPrice = (int)thinMarket.OwnLowestPrice.Value
+          }));
         return;
       }
 
-      int? priceDecision = DecidePrice(hqEligible);
+      var priceDecision = DecidePrice(hqEligible);
       if (priceDecision is null)
       {
-        FinishPriceRequest(-1);
+        FinishPriceRequest(NoPrice(new PricingDebugDetail(
+          PricingDebugReason.NoCredibleListing)
+        {
+          ListingCount = hqEligible.Count
+        }));
         return;
       }
 
@@ -161,12 +192,15 @@ namespace Dagobert
       FinishPriceRequest(priceDecision.Value);
     }
 
-    private async Task<int?> DecideThinMarketPriceAsync(
+    private async Task<PricingDecisionResult?> DecideThinMarketPriceAsync(
       ThinMarketListingContext thinMarket,
       int requestVersion)
     {
-      if (!Plugin.Configuration.EnableThinMarketAverageFallback ||
-          thinMarket.ListingCount > Math.Max(0, Plugin.Configuration.ThinMarketMaxListings))
+      var options = BuildThinMarketOptions();
+      if (!options.Enabled)
+        return null;
+
+      if (thinMarket.ListingCount > Math.Max(0, options.MaxListings))
         return null;
 
       if (_thinFallbackRequestVersion == requestVersion)
@@ -185,15 +219,10 @@ namespace Dagobert
           thinMarket.ListingCount,
           thinMarket.FloorPrice,
           averagePrice,
-          BuildThinMarketOptions(),
+          options,
           DateTimeOffset.UtcNow);
 
-        var price = ApplyThinMarketDecision(decision, thinMarket);
-        if (price is null)
-          return null;
-
-        FinishPriceRequest(price.Value);
-        return price;
+        return ApplyThinMarketDecision(decision, thinMarket, averagePrice, options);
       }
       finally
       {
@@ -227,16 +256,38 @@ namespace Dagobert
       }
     }
 
-    private static int? ApplyThinMarketDecision(
+    private static PricingDecisionResult ApplyThinMarketDecision(
       ThinMarketPricingDecision decision,
-      ThinMarketListingContext thinMarket)
+      ThinMarketListingContext thinMarket,
+      ThinMarketAveragePrice? averagePrice,
+      ThinMarketPricingOptions options)
     {
-      return decision.Action switch
+      var price = decision.Action switch
       {
         ThinMarketPricingAction.UseAverage => (int)decision.ReferencePrice,
         ThinMarketPricingAction.UndercutFloor => PriceAgainstFloor(decision.ReferencePrice, thinMarket.OwnLowestPrice),
-        _ => null
+        _ => -1
       };
+
+      var reason = decision.Action switch
+      {
+        ThinMarketPricingAction.UseAverage => PricingDebugReason.ThinMarketUseAverage,
+        ThinMarketPricingAction.UndercutFloor => PricingDebugReason.ThinMarketUndercutFloor,
+        _ => PricingDebugReason.ThinMarketSkip
+      };
+
+      return new PricingDecisionResult(
+        price,
+        BuildThinMarketDebug(
+          decision.Action,
+          decision.Reason,
+          thinMarket,
+          averagePrice,
+          options,
+          price) with
+        {
+          Reason = reason
+        });
     }
 
     private static int PriceAgainstFloor(uint floorPrice, uint? ownLowestPrice)
@@ -247,14 +298,21 @@ namespace Dagobert
       return Undercut(floorPrice);
     }
 
-    private int? DecidePrice(List<int> hqEligible)
+    private PricingDecisionResult? DecidePrice(List<int> hqEligible)
     {
       var opts = BuildOptions();
 
       if (Plugin.Configuration.UndercutSelf)
       {
         int? target = BaitGuard.SelectTargetIndex(_bufferedListings, hqEligible, opts);
-        return target is null ? null : Undercut(_bufferedListings[target.Value].PricePerUnit);
+        if (target is null)
+          return null;
+
+        var competitorPrice = _bufferedListings[target.Value].PricePerUnit;
+        var selectedPrice = Undercut(competitorPrice);
+        return new PricingDecisionResult(
+          selectedPrice,
+          BuildUndercutDebug(competitorPrice, selectedPrice));
       }
 
       var competitors = hqEligible
@@ -270,13 +328,85 @@ namespace Dagobert
       int? competitorIdx = BaitGuard.SelectTargetIndex(_bufferedListings, competitors, opts);
 
       if (competitorIdx is null)
-        return ownLowest is null ? null : (int)ownLowest.Value;
+      {
+        if (ownLowest is null)
+          return null;
+
+        return new PricingDecisionResult(
+          (int)ownLowest.Value,
+          new PricingDebugDetail(PricingDebugReason.OwnPriceAlreadyLowest)
+          {
+            OwnLowestPrice = (int)ownLowest.Value,
+            SelectedPrice = (int)ownLowest.Value,
+            ListingCount = hqEligible.Count
+          });
+      }
 
       var competitorPrice = _bufferedListings[competitorIdx.Value].PricePerUnit;
       if (ownLowest is not null && ownLowest.Value <= competitorPrice)
-        return (int)ownLowest.Value;
+      {
+        return new PricingDecisionResult(
+          (int)ownLowest.Value,
+          new PricingDebugDetail(PricingDebugReason.OwnPriceAlreadyLowest)
+          {
+            OwnLowestPrice = (int)ownLowest.Value,
+            CompetitorPrice = (int)competitorPrice,
+            SelectedPrice = (int)ownLowest.Value,
+            ListingCount = hqEligible.Count
+          });
+      }
 
-      return Undercut(competitorPrice);
+      var selectedPrice = Undercut(competitorPrice);
+      return new PricingDecisionResult(
+        selectedPrice,
+        BuildUndercutDebug(competitorPrice, selectedPrice) with
+        {
+          ListingCount = hqEligible.Count
+        });
+    }
+
+    private static PricingDebugDetail BuildUndercutDebug(uint competitorPrice, int selectedPrice)
+    {
+      return new PricingDebugDetail(PricingDebugReason.UndercutCompetitor)
+      {
+        CompetitorPrice = (int)competitorPrice,
+        SelectedPrice = selectedPrice,
+        UndercutMode = Plugin.Configuration.UndercutMode,
+        UndercutAmount = Plugin.Configuration.UndercutAmount,
+        UndercutPercent = Plugin.Configuration.UndercutAmountPercentage
+      };
+    }
+
+    private static PricingDebugDetail BuildThinMarketDebug(
+      ThinMarketPricingAction action,
+      ThinMarketPricingReason thinMarketReason,
+      ThinMarketListingContext thinMarket,
+      ThinMarketAveragePrice? averagePrice,
+      ThinMarketPricingOptions options,
+      int selectedPrice)
+    {
+      var reason = action switch
+      {
+        ThinMarketPricingAction.UseAverage => PricingDebugReason.ThinMarketUseAverage,
+        ThinMarketPricingAction.UndercutFloor => PricingDebugReason.ThinMarketUndercutFloor,
+        _ => PricingDebugReason.ThinMarketSkip
+      };
+
+      return new PricingDebugDetail(reason)
+      {
+        ListingCount = thinMarket.ListingCount,
+        FloorPrice = thinMarket.FloorPrice is null ? null : (int)thinMarket.FloorPrice.Value,
+        OwnLowestPrice = thinMarket.OwnLowestPrice is null ? null : (int)thinMarket.OwnLowestPrice.Value,
+        SelectedPrice = selectedPrice > 0 ? selectedPrice : null,
+        AveragePrice = averagePrice,
+        ThinMarketReason = thinMarketReason,
+        MinRecentSales = options.MinRecentSales,
+        MaxSaleAgeDays = options.MaxSaleAgeDays,
+        TolerancePercent = options.TolerancePercent,
+        UndercutMode = Plugin.Configuration.UndercutMode,
+        UndercutAmount = Plugin.Configuration.UndercutAmount,
+        UndercutPercent = Plugin.Configuration.UndercutAmountPercentage
+      };
     }
 
     private static int Undercut(uint competitorPricePerUnit)
@@ -352,9 +482,14 @@ namespace Dagobert
       return indices;
     }
 
-    private void FinishPriceRequest(int price)
+    private static PricingDecisionResult NoPrice(PricingDebugDetail debugDetail)
     {
-      NewPrice = price;
+      return new PricingDecisionResult(-1, debugDetail);
+    }
+
+    private void FinishPriceRequest(PricingDecisionResult result)
+    {
+      NewPriceReceived?.Invoke(this, new NewPriceEventArgs(result.Price, result.DebugDetail));
       _newRequest = false;
       IsPricePending = false;
     }

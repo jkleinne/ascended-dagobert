@@ -28,6 +28,7 @@ namespace Dagobert
     private readonly MarketBoardHandler _mbHandler;
     private int? _oldPrice;
     private int? _newPrice;
+    private PricingDebugDetail? _pricingDebugDetail;
     private bool _skipCurrentItem = false;
     private readonly TaskManager _taskManager;
     private Dictionary<string, int?> _cachedPrices = [];
@@ -457,6 +458,10 @@ namespace Dagobert
         {
           Svc.Log.Debug($"{itemName}: using cached price");
           _newPrice = value;
+          _pricingDebugDetail = new PricingDebugDetail(PricingDebugReason.CachedPrice)
+          {
+            SelectedPrice = value
+          };
           return true;
         }
         else
@@ -496,9 +501,13 @@ namespace Dagobert
               _cachedPrices.TryAdd(itemName, _newPrice);
               retainerSell->AskingPrice->SetValue(_newPrice.Value);
               Communicator.PrintPriceUpdate(itemName, _oldPrice.Value, _newPrice.Value, cutPercentage);
+              Communicator.PrintPricingDebug(itemName, _pricingDebugDetail);
             }
             else
+            {
               Communicator.PrintAboveMaxCutError(itemName);
+              Communicator.PrintPricingDebug(itemName, _pricingDebugDetail);
+            }
 
             ECommons.Automation.Callback.Fire(&retainerSell->AtkUnitBase, true, 0); // confirm
             ui->Close(true);
@@ -509,6 +518,7 @@ namespace Dagobert
           {
             Svc.Log.Warning("SetNewPrice: No price to set");
             Communicator.PrintNoPriceToSetError(itemName);
+            Communicator.PrintPricingDebug(itemName, _pricingDebugDetail);
             ECommons.Automation.Callback.Fire(&retainerSell->AtkUnitBase, true, 1); // cancel
             ui->Close(true);
             return true;
@@ -521,6 +531,7 @@ namespace Dagobert
       {
         _oldPrice = null;
         _newPrice = null;
+        _pricingDebugDetail = null;
         _skipCurrentItem = false;
       }
     }
@@ -529,6 +540,7 @@ namespace Dagobert
     {
       Svc.Log.Debug($"New price received: {e.NewPrice}");
       _newPrice = e.NewPrice;
+      _pricingDebugDetail = e.DebugDetail;
     }
 
     private unsafe void SkipRetainerDialog(AddonEvent type, AddonArgs args)
@@ -615,6 +627,7 @@ namespace Dagobert
     private void ClearState()
     {
       _newPrice = null;
+      _pricingDebugDetail = null;
       _cachedPrices = [];
       _skipCurrentItem = false;
     }

@@ -185,8 +185,20 @@ public sealed class ConfigWindow : Window
 
     ImGui.SameLine(0, 40);
 
-    bool retainerNames = Plugin.Configuration.ShowRetainerNames
-      ;
+    bool pricingDebug = Plugin.Configuration.ShowPricingDebug;
+    if (ImGui.Checkbox("Show Pricing Debug", ref pricingDebug))
+    {
+      Plugin.Configuration.ShowPricingDebug = pricingDebug;
+      Plugin.Configuration.Save();
+    }
+    if (ImGui.IsItemHovered())
+    {
+      ImGui.BeginTooltip();
+      ImGui.SetTooltip("If enabled, chat and plugin logs explain why each price was selected or skipped, including Universalis details.");
+      ImGui.EndTooltip();
+    }
+
+    bool retainerNames = Plugin.Configuration.ShowRetainerNames;
     if (ImGui.Checkbox("Show Retainer Names", ref retainerNames))
     {
       Plugin.Configuration.ShowRetainerNames = retainerNames;

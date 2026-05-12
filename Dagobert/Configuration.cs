@@ -64,6 +64,11 @@ public sealed class Configuration : IPluginConfiguration
 
   public bool ShowPriceAdjustmentsMessages { get; set; } = true;
 
+  /// <summary>
+  /// Shows why a price was selected or skipped, including Universalis inputs.
+  /// </summary>
+  public bool ShowPricingDebug { get; set; } = false;
+
   public bool ShowRetainerNames { get; set; } = true;
 
   public bool TTSWhenAllDone { get; set; } = false;
