@@ -21,6 +21,7 @@ public sealed class Plugin : IDalamudPlugin
   [PluginService] public static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
   [PluginService] public static IChatGui ChatGui { get; private set; } = null!;
   [PluginService] public static IClientState ClientState { get; private set; } = null!;
+  [PluginService] public static IPlayerState PlayerState { get; private set; } = null!;
   [PluginService] public static IGameInteropProvider GameInteropProvider { get; private set; } = null!;
   [PluginService] public static IPluginLog Log { get; private set; } = null!;
 

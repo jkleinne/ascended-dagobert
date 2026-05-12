@@ -70,7 +70,7 @@ internal static class ThinMarketPricePolicy
 
   private static bool IsWithinTolerance(uint floorPrice, uint averagePrice, float tolerancePercent)
   {
-    var tolerance = Math.Clamp(tolerancePercent, 0f, 1000f) / 100m;
+    var tolerance = (decimal)Math.Clamp(tolerancePercent, 0f, 1000f) / 100m;
     var average = (decimal)averagePrice;
     var floor = (decimal)floorPrice;
     var lowerBound = average * (1m - tolerance);

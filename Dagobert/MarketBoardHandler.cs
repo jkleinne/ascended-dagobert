@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 
 namespace Dagobert
 {
-  internal unsafe sealed class MarketBoardHandler : IDisposable
+  internal sealed class MarketBoardHandler : IDisposable
   {
     private readonly IAverageSalePriceProvider _averageSalePriceProvider;
     private readonly MarketBoardRequestTracker _marketBoardRequestTracker;
@@ -204,15 +204,14 @@ namespace Dagobert
 
     private async Task<ThinMarketAveragePrice?> GetAverageSalePriceAsync(int requestVersion)
     {
-      var player = Plugin.ClientState.LocalPlayer;
-      if (player is null || _currentItemId == 0)
+      if (!Plugin.PlayerState.IsLoaded || _currentItemId == 0)
         return null;
 
       _averagePriceRequestCancellation = new CancellationTokenSource();
       try
       {
         return await _averageSalePriceProvider.GetAverageSalePriceAsync(
-          player.HomeWorld.RowId,
+          Plugin.PlayerState.HomeWorld.RowId,
           _currentItemId,
           _useHq,
           Plugin.Configuration.ThinMarketMinRecentSales,
@@ -384,7 +383,7 @@ namespace Dagobert
       _currentItemId = GetSelectedItemId();
     }
 
-    public void PopulateRetainerCache()
+    public unsafe void PopulateRetainerCache()
     {
       bool changed = false;
       var retainerManager = RetainerManager.Instance();
