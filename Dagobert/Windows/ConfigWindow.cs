@@ -42,11 +42,7 @@ public sealed class ConfigWindow : Window
     int index = Array.IndexOf(enumValues, Plugin.Configuration.UndercutMode.ToString());
     if (ImGui.Combo("##undercutModeCombo", ref index, enumValues, enumValues.Length))
     {
-      var value = Enum.Parse<UndercutMode>(enumValues[index]);
-      if (value == UndercutMode.Percentage && Plugin.Configuration.UndercutAmount >= 100)
-        Plugin.Configuration.UndercutAmount = 1;
-
-      Plugin.Configuration.UndercutMode = value;
+      Plugin.Configuration.UndercutMode = Enum.Parse<UndercutMode>(enumValues[index]);
       Plugin.Configuration.Save();
     }
     ImGui.EndGroup();
@@ -60,9 +56,9 @@ public sealed class ConfigWindow : Window
     ImGui.BeginGroup();
     ImGui.Text("Undercut amount:");
     ImGui.SameLine();
-    int amount = Plugin.Configuration.UndercutAmount;
     if (Plugin.Configuration.UndercutMode == UndercutMode.FixedAmount)
     {
+      int amount = Plugin.Configuration.UndercutAmount;
       if (ImGui.InputInt("##undercutAmountFixed", ref amount))
       {
         Plugin.Configuration.UndercutAmount = Math.Clamp(amount, 1, int.MaxValue);
@@ -71,9 +67,10 @@ public sealed class ConfigWindow : Window
     }
     else
     {
-      if (ImGui.SliderInt("##undercutAmountPercentage", ref amount, 1, 99))
+      float pctAmount = Plugin.Configuration.UndercutAmountPercentage;
+      if (ImGui.InputFloat("##undercutAmountPercentage", ref pctAmount, 0.5f, 1.0f, "%.1f"))
       {
-        Plugin.Configuration.UndercutAmount = amount;
+        Plugin.Configuration.UndercutAmountPercentage = Math.Clamp(MathF.Round(pctAmount, 1), 0.5f, 99.5f);
         Plugin.Configuration.Save();
       }
     }

@@ -32,6 +32,7 @@ public sealed class Plugin : IDalamudPlugin
   public Plugin()
   {
     Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+    MigrateConfiguration(Configuration);
     ConfigWindow = new ConfigWindow();
     WindowSystem.AddWindow(ConfigWindow);
 
@@ -58,6 +59,19 @@ public sealed class Plugin : IDalamudPlugin
     _autoPinch.Dispose();
     CommandManager.RemoveHandler("/dagobert");
     ECommonsMain.Dispose();
+  }
+
+  // Carries pre-v1 configs forward: UndercutAmount used to hold the percent value too,
+  // now lives in UndercutAmountPercentage so percent and gil don't collide.
+  private static void MigrateConfiguration(Configuration config)
+  {
+    if (config.Version >= 1) return;
+
+    if (config.UndercutMode == UndercutMode.Percentage)
+      config.UndercutAmountPercentage = config.UndercutAmount;
+
+    config.Version = 1;
+    config.Save();
   }
 
   private void OnDagobertCommand(string command, string args)
