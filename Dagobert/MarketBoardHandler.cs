@@ -8,22 +8,30 @@ using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Dagobert
 {
-  internal unsafe sealed class MarketBoardHandler : IDisposable
+  internal sealed class MarketBoardHandler : IDisposable
   {
+    private readonly IAverageSalePriceProvider _averageSalePriceProvider;
+    private readonly MarketBoardRequestTracker _marketBoardRequestTracker;
     private readonly Lumina.Excel.ExcelSheet<Item> _items;
     private bool _newRequest;
     private bool _useHq;
     private bool _itemHq;
+    private uint _currentItemId;
+    private int _requestVersion;
     private int _lastRequestId = -1;
+    private int _thinFallbackRequestVersion = -1;
+    private uint? _expectedListings;
+    private CancellationTokenSource? _averagePriceRequestCancellation;
 
-    // Listings arrive in batches of ~10 per OfferingsReceived event for the same
-    // RequestId. BaitGuard needs the full set to compute a meaningful price floor,
-    // so we accumulate per request and re-evaluate as each batch lands.
     private int _bufferedRequestId = -1;
     private readonly List<IMarketBoardItemListing> _bufferedListings = new();
+
+    public bool IsPricePending { get; private set; }
 
     private int NewPrice
     {
@@ -38,11 +46,16 @@ namespace Dagobert
 
     public event EventHandler<NewPriceEventArgs>? NewPriceReceived;
 
-    public MarketBoardHandler()
+    public MarketBoardHandler(
+      IAverageSalePriceProvider averageSalePriceProvider,
+      MarketBoardRequestTracker marketBoardRequestTracker)
     {
+      _averageSalePriceProvider = averageSalePriceProvider;
+      _marketBoardRequestTracker = marketBoardRequestTracker;
       _items = Svc.Data.GetExcelSheet<Item>();
 
       Plugin.MarketBoard.OfferingsReceived += MarketBoardOnOfferingsReceived;
+      _marketBoardRequestTracker.RequestStarted += MarketBoardRequestTrackerOnRequestStarted;
 
       Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, "RetainerSell", AddonRetainerSellPostSetup);
       Plugin.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, "ItemSearchResult", ItemSearchResultPostSetup);
@@ -50,64 +63,200 @@ namespace Dagobert
 
     public void Dispose()
     {
+      _averagePriceRequestCancellation?.Cancel();
+      _averagePriceRequestCancellation?.Dispose();
       Plugin.MarketBoard.OfferingsReceived -= MarketBoardOnOfferingsReceived;
+      _marketBoardRequestTracker.RequestStarted -= MarketBoardRequestTrackerOnRequestStarted;
       Plugin.AddonLifecycle.UnregisterListener(AddonEvent.PostSetup, "RetainerSell", AddonRetainerSellPostSetup);
       Plugin.AddonLifecycle.UnregisterListener(AddonEvent.PostSetup, "ItemSearchResult", ItemSearchResultPostSetup);
     }
 
-    private void MarketBoardOnOfferingsReceived(IMarketBoardCurrentOfferings currentOfferings)
+    public void PrepareForPriceRequest()
+    {
+      _averagePriceRequestCancellation?.Cancel();
+      _averagePriceRequestCancellation?.Dispose();
+      _averagePriceRequestCancellation = null;
+
+      _newRequest = true;
+      _useHq = Plugin.Configuration.HQ && _itemHq;
+      _expectedListings = null;
+      _bufferedListings.Clear();
+      _bufferedRequestId = -1;
+      _thinFallbackRequestVersion = -1;
+      IsPricePending = false;
+      _requestVersion++;
+      CaptureCurrentItem();
+    }
+
+    private async void MarketBoardRequestTrackerOnRequestStarted(MarketBoardRequestStartedEventArgs request)
+    {
+      if (!_newRequest)
+        return;
+
+      if (!request.Ok)
+      {
+        Svc.Log.Warning($"Market board request failed with status {request.Status}");
+        FinishPriceRequest(-1);
+        return;
+      }
+
+      _expectedListings = request.AmountToArrive;
+      if (request.AmountToArrive == 0)
+      {
+        var requestVersion = _requestVersion;
+        var price = await DecideThinMarketPriceAsync(new ThinMarketListingContext(0, null, null), requestVersion);
+        if (price is null && requestVersion == _requestVersion)
+          FinishPriceRequest(-1);
+      }
+    }
+
+    private async void MarketBoardOnOfferingsReceived(IMarketBoardCurrentOfferings currentOfferings)
     {
       if (!_newRequest)
         return;
 
       if (currentOfferings.RequestId == _lastRequestId)
       {
-        NewPrice = -1;
+        FinishPriceRequest(-1);
         return;
       }
 
+      var requestVersion = _requestVersion;
       AccumulateBatch(currentOfferings);
-
-      if (_bufferedListings.Count == 0)
-      {
-        NewPrice = -1;
+      if (_expectedListings is not null && _bufferedListings.Count < _expectedListings.Value)
         return;
-      }
 
       var hqEligible = BuildHqEligibleIndices();
+      var thinMarket = BuildThinMarketListingContext(hqEligible);
+      if (_thinFallbackRequestVersion == requestVersion && IsPricePending)
+        return;
+
+      if (thinMarket.ListingCount <= Math.Max(0, Plugin.Configuration.ThinMarketMaxListings))
+      {
+        var thinPrice = await DecideThinMarketPriceAsync(thinMarket, requestVersion);
+        if (thinPrice is not null)
+          return;
+
+        if (thinMarket.ListingCount > 0)
+        {
+          FinishPriceRequest(-1);
+          return;
+        }
+      }
+
       if (hqEligible.Count == 0)
       {
-        NewPrice = -1; // wait for more incoming offerings
+        FinishPriceRequest(thinMarket.OwnLowestPrice is null ? -1 : (int)thinMarket.OwnLowestPrice.Value);
         return;
       }
 
       int? priceDecision = DecidePrice(hqEligible);
       if (priceDecision is null)
       {
-        NewPrice = -1; // no credible target yet — wait for more batches
+        FinishPriceRequest(-1);
         return;
       }
 
-      NewPrice = priceDecision.Value;
       _lastRequestId = currentOfferings.RequestId;
-      _newRequest = false;
+      FinishPriceRequest(priceDecision.Value);
+    }
+
+    private async Task<int?> DecideThinMarketPriceAsync(
+      ThinMarketListingContext thinMarket,
+      int requestVersion)
+    {
+      if (!Plugin.Configuration.EnableThinMarketAverageFallback ||
+          thinMarket.ListingCount > Math.Max(0, Plugin.Configuration.ThinMarketMaxListings))
+        return null;
+
+      if (_thinFallbackRequestVersion == requestVersion)
+        return null;
+
+      _thinFallbackRequestVersion = requestVersion;
+      IsPricePending = true;
+
+      try
+      {
+        var averagePrice = await GetAverageSalePriceAsync(requestVersion);
+        if (requestVersion != _requestVersion)
+          return null;
+
+        var decision = ThinMarketPricePolicy.Decide(
+          thinMarket.ListingCount,
+          thinMarket.FloorPrice,
+          averagePrice,
+          BuildThinMarketOptions(),
+          DateTimeOffset.UtcNow);
+
+        var price = ApplyThinMarketDecision(decision, thinMarket);
+        if (price is null)
+          return null;
+
+        FinishPriceRequest(price.Value);
+        return price;
+      }
+      finally
+      {
+        if (requestVersion == _requestVersion)
+          IsPricePending = false;
+      }
+    }
+
+    private async Task<ThinMarketAveragePrice?> GetAverageSalePriceAsync(int requestVersion)
+    {
+      if (!Plugin.PlayerState.IsLoaded || _currentItemId == 0)
+        return null;
+
+      _averagePriceRequestCancellation = new CancellationTokenSource();
+      try
+      {
+        return await _averageSalePriceProvider.GetAverageSalePriceAsync(
+          Plugin.PlayerState.HomeWorld.RowId,
+          _currentItemId,
+          _useHq,
+          Plugin.Configuration.ThinMarketMinRecentSales,
+          _averagePriceRequestCancellation.Token);
+      }
+      finally
+      {
+        if (requestVersion == _requestVersion)
+        {
+          _averagePriceRequestCancellation.Dispose();
+          _averagePriceRequestCancellation = null;
+        }
+      }
+    }
+
+    private static int? ApplyThinMarketDecision(
+      ThinMarketPricingDecision decision,
+      ThinMarketListingContext thinMarket)
+    {
+      return decision.Action switch
+      {
+        ThinMarketPricingAction.UseAverage => (int)decision.ReferencePrice,
+        ThinMarketPricingAction.UndercutFloor => PriceAgainstFloor(decision.ReferencePrice, thinMarket.OwnLowestPrice),
+        _ => null
+      };
+    }
+
+    private static int PriceAgainstFloor(uint floorPrice, uint? ownLowestPrice)
+    {
+      if (ownLowestPrice is not null && ownLowestPrice.Value <= floorPrice)
+        return (int)ownLowestPrice.Value;
+
+      return Undercut(floorPrice);
     }
 
     private int? DecidePrice(List<int> hqEligible)
     {
       var opts = BuildOptions();
 
-      // UndercutSelf=true: own retainers compete on equal footing — bait guard sees
-      // them, undercut applies to whatever it picks. Simpler path.
       if (Plugin.Configuration.UndercutSelf)
       {
         int? target = BaitGuard.SelectTargetIndex(_bufferedListings, hqEligible, opts);
         return target is null ? null : Undercut(_bufferedListings[target.Value].PricePerUnit);
       }
 
-      // UndercutSelf=false: run bait guard over competitors only, then check whether
-      // our own retainer is already at or below the credible competitor's price.
-      // If so, hold position (price-match own, which is a no-op for the addon).
       var competitors = hqEligible
         .Where(i => !IsOwnRetainer(_bufferedListings[i].RetainerId))
         .ToList();
@@ -121,16 +270,11 @@ namespace Dagobert
       int? competitorIdx = BaitGuard.SelectTargetIndex(_bufferedListings, competitors, opts);
 
       if (competitorIdx is null)
-      {
-        // No credible competitor visible. If we have own listings, hold at own's
-        // current lowest (matches the original behavior of price-matching when
-        // listings[0] was your own retainer). Otherwise, wait for more batches.
         return ownLowest is null ? null : (int)ownLowest.Value;
-      }
 
       var competitorPrice = _bufferedListings[competitorIdx.Value].PricePerUnit;
       if (ownLowest is not null && ownLowest.Value <= competitorPrice)
-        return (int)ownLowest.Value; // already competitive — no change
+        return (int)ownLowest.Value;
 
       return Undercut(competitorPrice);
     }
@@ -152,6 +296,32 @@ namespace Dagobert
       GapPercent: Plugin.Configuration.BaitGuardGapPercent,
       MinQuantity: Plugin.Configuration.BaitGuardMinQuantity);
 
+    private static ThinMarketPricingOptions BuildThinMarketOptions() => new(
+      Enabled: Plugin.Configuration.EnableThinMarketAverageFallback,
+      MaxListings: Plugin.Configuration.ThinMarketMaxListings,
+      MinRecentSales: Plugin.Configuration.ThinMarketMinRecentSales,
+      MaxSaleAgeDays: Plugin.Configuration.ThinMarketMaxSaleAgeDays,
+      TolerancePercent: Plugin.Configuration.ThinMarketAverageTolerancePercent);
+
+    private ThinMarketListingContext BuildThinMarketListingContext(List<int> hqEligible)
+    {
+      var eligibleForFloor = Plugin.Configuration.UndercutSelf
+        ? hqEligible
+        : hqEligible.Where(i => !IsOwnRetainer(_bufferedListings[i].RetainerId)).ToList();
+      var ownIndices = Plugin.Configuration.UndercutSelf
+        ? new List<int>()
+        : hqEligible.Where(i => IsOwnRetainer(_bufferedListings[i].RetainerId)).ToList();
+
+      uint? floorPrice = eligibleForFloor.Count == 0
+        ? null
+        : eligibleForFloor.Min(i => _bufferedListings[i].PricePerUnit);
+      uint? ownLowest = ownIndices.Count == 0
+        ? null
+        : ownIndices.Min(i => _bufferedListings[i].PricePerUnit);
+
+      return new ThinMarketListingContext(eligibleForFloor.Count, floorPrice, ownLowest);
+    }
+
     private void AccumulateBatch(IMarketBoardCurrentOfferings currentOfferings)
     {
       if (_bufferedRequestId != currentOfferings.RequestId)
@@ -168,8 +338,9 @@ namespace Dagobert
     {
       var indices = new List<int>(_bufferedListings.Count);
       bool requireHq = _useHq
-                       && _bufferedListings.Count > 0
-                       && _items.Single(j => j.RowId == _bufferedListings[0].ItemId).CanBeHq;
+                       && _currentItemId != 0
+                       && _items.TryGetRow(_currentItemId, out var item)
+                       && item.CanBeHq;
 
       for (int i = 0; i < _bufferedListings.Count; i++)
       {
@@ -181,21 +352,38 @@ namespace Dagobert
       return indices;
     }
 
+    private void FinishPriceRequest(int price)
+    {
+      NewPrice = price;
+      _newRequest = false;
+      IsPricePending = false;
+    }
+
     private void ItemSearchResultPostSetup(AddonEvent type, AddonArgs args)
     {
-      _newRequest = true;
-      _useHq = Plugin.Configuration.HQ && _itemHq;
-      _bufferedListings.Clear();
-      _bufferedRequestId = -1;
+      if (!_newRequest)
+        PrepareForPriceRequest();
     }
 
     private unsafe void AddonRetainerSellPostSetup(AddonEvent type, AddonArgs args)
     {
       string nodeText = ((AddonRetainerSell*)args.Addon.Address)->ItemName->NodeText.ToString();
       _itemHq = nodeText.Contains('');
+      CaptureCurrentItem();
     }
 
-    public void PopulateRetainerCache()
+    private static unsafe uint GetSelectedItemId()
+    {
+      var selectedItem = InventoryManager.Instance()->GetInventorySlot(InventoryType.BlockedItems, 0);
+      return selectedItem == null ? 0 : selectedItem->ItemId;
+    }
+
+    private void CaptureCurrentItem()
+    {
+      _currentItemId = GetSelectedItemId();
+    }
+
+    public unsafe void PopulateRetainerCache()
     {
       bool changed = false;
       var retainerManager = RetainerManager.Instance();
@@ -215,5 +403,10 @@ namespace Dagobert
     }
 
     private static bool IsOwnRetainer(ulong retainerId) => Plugin.Configuration.SeenRetainers.Contains(retainerId);
+
+    private readonly record struct ThinMarketListingContext(
+      int ListingCount,
+      uint? FloorPrice,
+      uint? OwnLowestPrice);
   }
 }
