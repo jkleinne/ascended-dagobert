@@ -138,9 +138,11 @@ namespace Dagobert
     private static int Undercut(uint competitorPricePerUnit)
     {
       int competitor = (int)competitorPricePerUnit;
-      return Plugin.Configuration.UndercutMode == UndercutMode.FixedAmount
-        ? Math.Max(competitor - Plugin.Configuration.UndercutAmount, 1)
-        : Math.Max((100 - Plugin.Configuration.UndercutAmount) * competitor / 100, 1);
+      if (Plugin.Configuration.UndercutMode == UndercutMode.FixedAmount)
+        return Math.Max(competitor - Plugin.Configuration.UndercutAmount, 1);
+
+      float percent = Plugin.Configuration.UndercutAmountPercentage;
+      return Math.Max((int)((100f - percent) * competitor / 100f), 1);
     }
 
     private static BaitGuard.Options BuildOptions() => new(
