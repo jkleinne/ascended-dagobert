@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../Dagobert/BaitGuard.cs" Link="Production/BaitGuard.cs" />
     <Compile Include="../Dagobert/ThinMarketPricePolicy.cs" Link="Production/ThinMarketPricePolicy.cs" />
     <Compile Include="../Dagobert/UniversalisAveragePriceProvider.cs" Link="Production/UniversalisAveragePriceProvider.cs" />
   </ItemGroup>
