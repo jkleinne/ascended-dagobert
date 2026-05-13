@@ -18,12 +18,12 @@ namespace Dagobert
     private readonly IAverageSalePriceProvider _averageSalePriceProvider;
     private readonly IRecentSaleReferenceProvider _saleReferenceProvider;
     private readonly MarketBoardRequestTracker _marketBoardRequestTracker;
+    private readonly MarketBoardPriceRequestState _priceRequestState = new();
     private readonly Lumina.Excel.ExcelSheet<Item> _items;
-    private bool _newRequest;
+    private bool _isPricingDecisionPending;
     private bool _useHq;
     private bool _itemHq;
     private uint _currentItemId;
-    private int _requestVersion;
     private int _lastRequestId = -1;
     private int _thinFallbackRequestVersion = -1;
     private uint? _expectedListings;
@@ -32,7 +32,7 @@ namespace Dagobert
     private int _bufferedRequestId = -1;
     private readonly List<IMarketBoardItemListing> _bufferedListings = new();
 
-    public bool IsPricePending { get; private set; }
+    public bool IsPricePending => _priceRequestState.IsActive;
 
     public event EventHandler<NewPriceEventArgs>? NewPriceReceived;
 
@@ -69,39 +69,55 @@ namespace Dagobert
       _averagePriceRequestCancellation?.Dispose();
       _averagePriceRequestCancellation = null;
 
-      _newRequest = true;
       _useHq = Plugin.Configuration.HQ && _itemHq;
       _expectedListings = null;
       _bufferedListings.Clear();
       _bufferedRequestId = -1;
       _thinFallbackRequestVersion = -1;
-      IsPricePending = false;
-      _requestVersion++;
+      _isPricingDecisionPending = false;
       CaptureCurrentItem();
+      var requestVersion = _priceRequestState.BeginRequest();
+      Svc.Log.Debug(
+        "Prepared market board price request {RequestVersion} for item {ItemId}, use HQ {UseHq}, item HQ {ItemHq}",
+        requestVersion,
+        _currentItemId,
+        _useHq,
+        _itemHq);
     }
 
     private async void MarketBoardRequestTrackerOnRequestStarted(MarketBoardRequestStartedEventArgs request)
     {
-      if (!_newRequest)
+      if (!_priceRequestState.IsActive)
         return;
+
+      var requestVersion = _priceRequestState.Version;
+      Svc.Log.Debug(
+        "Market board request {RequestVersion} started for item {ItemId}, status {Status}, expected listings {ExpectedListings}",
+        requestVersion,
+        _currentItemId,
+        request.Status,
+        request.AmountToArrive);
 
       if (!request.Ok)
       {
-        Svc.Log.Warning($"Market board request failed with status {request.Status}");
+        Svc.Log.Warning(
+          "Market board request {RequestVersion} failed for item {ItemId} with status {Status}",
+          requestVersion,
+          _currentItemId,
+          request.Status);
         FinishPriceRequest(NoPrice(new PricingDebugDetail(
           PricingDebugReason.MarketBoardRequestFailed)
         {
           RequestStatus = request.Status.ToString()
-        }));
+        }), requestVersion);
         return;
       }
 
       _expectedListings = request.AmountToArrive;
       if (request.AmountToArrive == 0)
       {
-        var requestVersion = _requestVersion;
         var result = await DecideThinMarketPriceAsync(new ThinMarketListingContext(0, null, null), requestVersion);
-        if (requestVersion != _requestVersion)
+        if (!_priceRequestState.IsCurrent(requestVersion))
           return;
 
         FinishPriceRequest(result ?? NoPrice(BuildThinMarketDebug(
@@ -110,41 +126,61 @@ namespace Dagobert
           new ThinMarketListingContext(0, null, null),
           null,
           BuildThinMarketOptions(),
-          0)));
+          0)), requestVersion);
       }
     }
 
     private async void MarketBoardOnOfferingsReceived(IMarketBoardCurrentOfferings currentOfferings)
     {
-      if (!_newRequest)
+      if (!_priceRequestState.IsActive)
         return;
 
-      if (IsPricePending)
+      if (_isPricingDecisionPending)
         return;
 
+      var requestVersion = _priceRequestState.Version;
       if (currentOfferings.RequestId == _lastRequestId)
       {
         FinishPriceRequest(NoPrice(new PricingDebugDetail(
-          PricingDebugReason.DuplicateMarketBoardRequest)));
+          PricingDebugReason.DuplicateMarketBoardRequest)), requestVersion);
         return;
       }
 
-      var requestVersion = _requestVersion;
+      var batchListingCount = currentOfferings.ItemListings.Count();
       AccumulateBatch(currentOfferings);
+      Svc.Log.Debug(
+        "Market board request {RequestVersion} received offerings batch {RequestId} for item {ItemId}, batch listings {BatchListings}, buffered listings {BufferedListings}, expected listings {ExpectedListings}",
+        requestVersion,
+        currentOfferings.RequestId,
+        _currentItemId,
+        batchListingCount,
+        _bufferedListings.Count,
+        _expectedListings);
       if (_expectedListings is not null && _bufferedListings.Count < _expectedListings.Value)
         return;
 
       var hqEligible = BuildHqEligibleIndices();
       var thinMarket = BuildThinMarketListingContext(hqEligible);
-      if (_thinFallbackRequestVersion == requestVersion && IsPricePending)
+      Svc.Log.Debug(
+        "Market board request {RequestVersion} built pricing candidates for item {ItemId}, eligible listings {EligibleListings}, thin market listings {ThinMarketListings}, floor {FloorPrice}, own lowest {OwnLowestPrice}",
+        requestVersion,
+        _currentItemId,
+        hqEligible.Count,
+        thinMarket.ListingCount,
+        thinMarket.FloorPrice,
+        thinMarket.OwnLowestPrice);
+      if (_thinFallbackRequestVersion == requestVersion && _isPricingDecisionPending)
         return;
 
       if (thinMarket.ListingCount <= Math.Max(0, Plugin.Configuration.ThinMarketMaxListings))
       {
         var thinResult = await DecideThinMarketPriceAsync(thinMarket, requestVersion);
+        if (!_priceRequestState.IsCurrent(requestVersion))
+          return;
+
         if (thinResult is not null)
         {
-          FinishPriceRequest(thinResult.Value);
+          FinishPriceRequest(thinResult.Value, requestVersion);
           return;
         }
 
@@ -156,7 +192,7 @@ namespace Dagobert
             thinMarket,
             null,
             BuildThinMarketOptions(),
-            0)));
+            0)), requestVersion);
           return;
         }
       }
@@ -169,7 +205,7 @@ namespace Dagobert
             PricingDebugReason.NoEligibleListings)
           {
             ListingCount = 0
-          }));
+          }), requestVersion);
           return;
         }
 
@@ -179,23 +215,23 @@ namespace Dagobert
           {
             OwnLowestPrice = (int)thinMarket.OwnLowestPrice.Value,
             SelectedPrice = (int)thinMarket.OwnLowestPrice.Value
-          }));
+          }), requestVersion);
         return;
       }
 
       PricingDecisionResult? priceDecision;
-      IsPricePending = true;
+      _isPricingDecisionPending = true;
       try
       {
         priceDecision = await DecidePriceAsync(hqEligible, requestVersion);
       }
       catch
       {
-        if (requestVersion == _requestVersion)
-          IsPricePending = false;
+        if (_priceRequestState.IsCurrent(requestVersion))
+          _isPricingDecisionPending = false;
         throw;
       }
-      if (requestVersion != _requestVersion)
+      if (!_priceRequestState.IsCurrent(requestVersion))
         return;
 
       if (priceDecision is null)
@@ -204,12 +240,12 @@ namespace Dagobert
           PricingDebugReason.NoCredibleListing)
         {
           ListingCount = hqEligible.Count
-        }));
+        }), requestVersion);
         return;
       }
 
       _lastRequestId = currentOfferings.RequestId;
-      FinishPriceRequest(priceDecision.Value);
+      FinishPriceRequest(priceDecision.Value, requestVersion);
     }
 
     private async Task<PricingDecisionResult?> DecideThinMarketPriceAsync(
@@ -227,12 +263,12 @@ namespace Dagobert
         return null;
 
       _thinFallbackRequestVersion = requestVersion;
-      IsPricePending = true;
+      _isPricingDecisionPending = true;
 
       try
       {
         var averagePrice = await GetAverageSalePriceAsync(requestVersion);
-        if (requestVersion != _requestVersion)
+        if (!_priceRequestState.IsCurrent(requestVersion))
           return null;
 
         var decision = ThinMarketPricePolicy.Decide(
@@ -246,15 +282,22 @@ namespace Dagobert
       }
       finally
       {
-        if (requestVersion == _requestVersion)
-          IsPricePending = false;
+        if (_priceRequestState.IsCurrent(requestVersion))
+          _isPricingDecisionPending = false;
       }
     }
 
     private async Task<ThinMarketAveragePrice?> GetAverageSalePriceAsync(int requestVersion)
     {
       if (!Plugin.PlayerState.IsLoaded || _currentItemId == 0)
+      {
+        Svc.Log.Debug(
+          "Skipping Universalis average price request {RequestVersion}, player loaded {PlayerLoaded}, item {ItemId}",
+          requestVersion,
+          Plugin.PlayerState.IsLoaded,
+          _currentItemId);
         return null;
+      }
 
       _averagePriceRequestCancellation = new CancellationTokenSource();
       try
@@ -268,7 +311,7 @@ namespace Dagobert
       }
       finally
       {
-        if (requestVersion == _requestVersion)
+        if (_priceRequestState.IsCurrent(requestVersion))
         {
           _averagePriceRequestCancellation.Dispose();
           _averagePriceRequestCancellation = null;
@@ -279,7 +322,14 @@ namespace Dagobert
     private async Task<RecentSaleReference?> GetRecentSaleReferenceAsync(int requestVersion)
     {
       if (!Plugin.PlayerState.IsLoaded || _currentItemId == 0)
+      {
+        Svc.Log.Debug(
+          "Skipping Universalis sale reference request {RequestVersion}, player loaded {PlayerLoaded}, item {ItemId}",
+          requestVersion,
+          Plugin.PlayerState.IsLoaded,
+          _currentItemId);
         return null;
+      }
 
       _averagePriceRequestCancellation = new CancellationTokenSource();
       try
@@ -295,7 +345,7 @@ namespace Dagobert
       }
       finally
       {
-        if (requestVersion == _requestVersion)
+        if (_priceRequestState.IsCurrent(requestVersion))
         {
           _averagePriceRequestCancellation.Dispose();
           _averagePriceRequestCancellation = null;
@@ -359,7 +409,7 @@ namespace Dagobert
         if (opts.Enabled)
           selfSaleReference = await GetRecentSaleReferenceAsync(requestVersion);
 
-        if (requestVersion != _requestVersion)
+        if (!_priceRequestState.IsCurrent(requestVersion))
           return null;
 
         int? target = BaitGuard.SelectTargetIndex(_bufferedListings, hqEligible, opts, selfSaleReference);
@@ -418,7 +468,7 @@ namespace Dagobert
       if (opts.Enabled)
         competitorSaleReference = await GetRecentSaleReferenceAsync(requestVersion);
 
-      if (requestVersion != _requestVersion)
+      if (!_priceRequestState.IsCurrent(requestVersion))
         return null;
 
       int? competitorIdx = BaitGuard.SelectTargetIndex(_bufferedListings, competitors, opts, competitorSaleReference);
@@ -586,16 +636,32 @@ namespace Dagobert
       return new PricingDecisionResult(-1, debugDetail);
     }
 
-    private void FinishPriceRequest(PricingDecisionResult result)
+    private void FinishPriceRequest(PricingDecisionResult result, int requestVersion)
     {
+      if (!_priceRequestState.IsCurrent(requestVersion))
+      {
+        Svc.Log.Debug(
+          "Ignored stale market board price request {RequestVersion} finish for item {ItemId}, current request {CurrentRequestVersion}",
+          requestVersion,
+          _currentItemId,
+          _priceRequestState.Version);
+        return;
+      }
+
+      Svc.Log.Debug(
+        "Finished market board price request {RequestVersion} for item {ItemId}, price {Price}, reason {Reason}",
+        requestVersion,
+        _currentItemId,
+        result.Price,
+        result.DebugDetail.Reason);
+      _priceRequestState.FinishRequest(requestVersion);
+      _isPricingDecisionPending = false;
       NewPriceReceived?.Invoke(this, new NewPriceEventArgs(result.Price, result.DebugDetail));
-      _newRequest = false;
-      IsPricePending = false;
     }
 
     private void ItemSearchResultPostSetup(AddonEvent type, AddonArgs args)
     {
-      if (!_newRequest)
+      if (!_priceRequestState.IsActive)
         PrepareForPriceRequest();
     }
 

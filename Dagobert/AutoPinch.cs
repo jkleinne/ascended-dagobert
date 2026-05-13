@@ -30,6 +30,7 @@ namespace Dagobert
     private int? _newPrice;
     private PricingDebugDetail? _pricingDebugDetail;
     private bool _skipCurrentItem = false;
+    private bool _loggedMarketPriceWait;
     private readonly TaskManager _taskManager;
     private Dictionary<string, int?> _cachedPrices = [];
 
@@ -472,7 +473,10 @@ namespace Dagobert
         }
         else
         {
-          Svc.Log.Debug($"Clicking compare prices");
+          Svc.Log.Debug(
+            "{ItemName}: clicking compare prices, pending market board request {IsPricePending}",
+            itemName,
+            _mbHandler.IsPricePending);
           _mbHandler.PrepareForPriceRequest();
           ECommons.Automation.Callback.Fire(&addon->AtkUnitBase, true, 4);
           return true;
@@ -522,7 +526,14 @@ namespace Dagobert
           }
           else
           {
-            Svc.Log.Warning("SetNewPrice: No price to set");
+            Svc.Log.Warning(
+              "{ItemName}: no price to set, old price {OldPrice}, received price {NewPrice}, pending market board request {IsPricePending}, skip current item {SkipCurrentItem}, pricing reason {PricingReason}",
+              itemName,
+              _oldPrice,
+              _newPrice,
+              _mbHandler.IsPricePending,
+              _skipCurrentItem,
+              _pricingDebugDetail?.Reason);
             Communicator.PrintNoPriceToSetError(itemName);
             Communicator.PrintPricingDebug(itemName, _pricingDebugDetail);
             ECommons.Automation.Callback.Fire(&retainerSell->AtkUnitBase, true, 1); // cancel
@@ -539,12 +550,16 @@ namespace Dagobert
         _newPrice = null;
         _pricingDebugDetail = null;
         _skipCurrentItem = false;
+        _loggedMarketPriceWait = false;
       }
     }
 
     private void MBHandler_NewPriceReceived(object? sender, NewPriceEventArgs e)
     {
-      Svc.Log.Debug($"New price received: {e.NewPrice}");
+      Svc.Log.Debug(
+        "New price received: {NewPrice}, pricing reason {PricingReason}",
+        e.NewPrice,
+        e.DebugDetail?.Reason);
       _newPrice = e.NewPrice;
       _pricingDebugDetail = e.DebugDetail;
     }
@@ -568,6 +583,9 @@ namespace Dagobert
 
       if (Plugin.Configuration.EnablePostPinchkey && Plugin.KeyState[Plugin.Configuration.PostPinchKey])
       {
+        Svc.Log.Debug(
+          "Post pinch key {PostPinchKey} detected, enqueueing posted price update tasks",
+          Plugin.Configuration.PostPinchKey);
         _taskManager.Enqueue(ClickComparePrice, $"ClickComparePricePosted");
         _taskManager.DelayNext(Plugin.Configuration.MarketBoardKeepOpenMS);
         _taskManager.Enqueue(WaitForMarketPrice, $"WaitForMarketPricePosted");
@@ -577,7 +595,30 @@ namespace Dagobert
 
     private bool? WaitForMarketPrice()
     {
-      return _skipCurrentItem || !_mbHandler.IsPricePending;
+      if (_skipCurrentItem)
+        return true;
+
+      if (_mbHandler.IsPricePending)
+      {
+        if (!_loggedMarketPriceWait)
+        {
+          Svc.Log.Debug("Waiting for market board price request before setting retainer price");
+          _loggedMarketPriceWait = true;
+        }
+
+        return false;
+      }
+
+      if (_loggedMarketPriceWait)
+      {
+        Svc.Log.Debug(
+          "Market board price wait finished, received price {NewPrice}, pricing reason {PricingReason}",
+          _newPrice,
+          _pricingDebugDetail?.Reason);
+        _loggedMarketPriceWait = false;
+      }
+
+      return true;
     }
     private void RemoveTalkAddonListeners()
     {
@@ -636,6 +677,7 @@ namespace Dagobert
       _pricingDebugDetail = null;
       _cachedPrices = [];
       _skipCurrentItem = false;
+      _loggedMarketPriceWait = false;
     }
   }
 }

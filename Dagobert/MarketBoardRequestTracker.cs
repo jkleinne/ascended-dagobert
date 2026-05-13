@@ -49,7 +49,12 @@ internal sealed class MarketBoardRequestTracker : IDisposable
   {
     try
     {
-      RequestStarted?.Invoke(ReadRequestStarted(packetRef));
+      var requestStarted = ReadRequestStarted(packetRef);
+      _log.Debug(
+        "Market board request start packet read with status {Status}, expected listings {ExpectedListings}",
+        requestStarted.Status,
+        requestStarted.AmountToArrive);
+      RequestStarted?.Invoke(requestStarted);
     }
     catch (Exception ex)
     {
