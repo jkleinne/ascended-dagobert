@@ -14,9 +14,11 @@ Three filters apply, in order:
 2. **Listing-median price floor.** The bot takes the cheapest N listings and uses their median price-per-unit as the anchor. Anything below `FloorPercent` of that anchor is rejected as bait. Each listing counts once regardless of stack size, because stacks are atomic transactions on the market board (you buy the whole stack or none of it).
 3. **Price-gap detector.** If the cheapest credible listing sits below `GapPercent` of the second-cheapest, it gets skipped and the second is targeted instead.
 
-If no listing passes the filters, the bot holds off rather than committing to bait. All four thresholds are configurable in the "Bait Listing Protection" section of the config window, and the feature can be toggled off entirely to fall back to the legacy "cut to absolute lowest" behavior.
+When Universalis has enough recent matching-quality sales, the bot also checks tiny low-price clusters against the recent sale median. A below-median cluster is still accepted when it has enough listings or total quantity to look like a real reset; otherwise the bot skips ahead to the next credible candidate or holds.
 
-Defaults: 30% floor, 5-listing sample, 50% gap, min-quantity 1.
+If no listing passes the filters, the bot holds off rather than committing to bait. All thresholds are configurable in the "Bait Listing Protection" section of the config window, and the feature can be toggled off entirely to fall back to the legacy "cut to absolute lowest" behavior.
+
+Defaults: 30% listing floor, 5-listing sample, 50% gap, min-quantity 1, 50% sale-median floor, 3 low-cluster listings, 20 low-cluster quantity, 5% low-cluster tolerance, 3 sale-reference sales, 30-day sale-reference age.
 
 ### Thin-Market Average Fallback
 

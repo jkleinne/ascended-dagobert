@@ -5,6 +5,11 @@ using System.Linq;
 
 namespace Dagobert;
 
+internal readonly record struct RecentSaleReference(
+  uint MedianUnitPrice,
+  int RecentHistoryCount,
+  DateTimeOffset LatestSaleAt);
+
 /// <summary>
 /// Picks a credible competing listing to undercut, rather than blindly taking the
 /// lowest price. Defends against bait listings (e.g. a single-unit listing priced
@@ -16,12 +21,41 @@ namespace Dagobert;
 /// </remarks>
 internal static class BaitGuard
 {
+  internal const float DefaultSaleMedianFloorPercent = 50.0f;
+  internal const int DefaultLowClusterListings = 3;
+  internal const int DefaultLowClusterQuantity = 20;
+  internal const float DefaultLowClusterPriceTolerancePercent = 5.0f;
+
   public readonly record struct Options(
     bool Enabled,
     float FloorPercent,
     int SampleListings,
     float GapPercent,
-    int MinQuantity);
+    int MinQuantity,
+    float SaleMedianFloorPercent,
+    int LowClusterListings,
+    int LowClusterQuantity,
+    float LowClusterPriceTolerancePercent)
+  {
+    public Options(
+      bool enabled,
+      float floorPercent,
+      int sampleListings,
+      float gapPercent,
+      int minQuantity)
+      : this(
+        enabled,
+        floorPercent,
+        sampleListings,
+        gapPercent,
+        minQuantity,
+        DefaultSaleMedianFloorPercent,
+        DefaultLowClusterListings,
+        DefaultLowClusterQuantity,
+        DefaultLowClusterPriceTolerancePercent)
+    {
+    }
+  }
 
   /// <summary>
   /// Returns the index in <paramref name="listings"/> that should be undercut,
@@ -37,7 +71,8 @@ internal static class BaitGuard
   public static int? SelectTargetIndex(
     IReadOnlyList<IMarketBoardItemListing> listings,
     IReadOnlyList<int> candidateIndices,
-    Options opts)
+    Options opts,
+    RecentSaleReference? saleReference = null)
   {
     if (candidateIndices.Count == 0)
       return null;
@@ -81,17 +116,8 @@ internal static class BaitGuard
     if (passFloor.Count == 0)
       return null;
 
-    // Filter 3: price-gap detector. Catches bait that survived the floor (e.g. a
-    // medium-quantity listing priced 50%+ below the next-cheapest credible one).
-    if (passFloor.Count >= 2)
-    {
-      var firstPrice = listings[passFloor[0]].PricePerUnit;
-      var secondPrice = listings[passFloor[1]].PricePerUnit;
-      if ((float)firstPrice * 100f < opts.GapPercent * secondPrice)
-        return passFloor[1];
-    }
-
-    return passFloor[0];
+    var sequence = ApplyGapPromotion(listings, passFloor, opts.GapPercent);
+    return SelectBySaleReference(listings, sequence, opts, saleReference);
   }
 
   private static int MinByPrice(
@@ -103,6 +129,73 @@ internal static class BaitGuard
       if (listings[candidates[k]].PricePerUnit < listings[best].PricePerUnit)
         best = candidates[k];
     return best;
+  }
+
+  private static IReadOnlyList<int> ApplyGapPromotion(
+    IReadOnlyList<IMarketBoardItemListing> listings,
+    IReadOnlyList<int> candidates,
+    float gapPercent)
+  {
+    if (candidates.Count < 2)
+      return candidates;
+
+    var firstPrice = listings[candidates[0]].PricePerUnit;
+    var secondPrice = listings[candidates[1]].PricePerUnit;
+    if ((float)firstPrice * 100f >= gapPercent * secondPrice)
+      return candidates;
+
+    return candidates.Skip(1).ToList();
+  }
+
+  private static int? SelectBySaleReference(
+    IReadOnlyList<IMarketBoardItemListing> listings,
+    IReadOnlyList<int> candidates,
+    Options opts,
+    RecentSaleReference? saleReference)
+  {
+    if (candidates.Count == 0)
+      return null;
+
+    if (saleReference is null || saleReference.Value.MedianUnitPrice == 0)
+      return candidates[0];
+
+    var saleFloor = ComputeSaleMedianFloor(saleReference.Value.MedianUnitPrice, opts.SaleMedianFloorPercent);
+    foreach (var candidate in candidates)
+    {
+      if (listings[candidate].PricePerUnit >= saleFloor)
+        return candidate;
+
+      if (HasEnoughLowClusterEvidence(listings, candidates, candidate, opts))
+        return candidate;
+    }
+
+    return null;
+  }
+
+  private static uint ComputeSaleMedianFloor(uint medianUnitPrice, float saleMedianFloorPercent)
+  {
+    return (uint)(medianUnitPrice * Math.Max(0f, saleMedianFloorPercent) / 100f);
+  }
+
+  private static bool HasEnoughLowClusterEvidence(
+    IReadOnlyList<IMarketBoardItemListing> listings,
+    IReadOnlyList<int> candidates,
+    int candidate,
+    Options opts)
+  {
+    var candidatePrice = listings[candidate].PricePerUnit;
+    var toleranceRatio = (decimal)Math.Max(0f, opts.LowClusterPriceTolerancePercent) / 100m;
+    var upperBound = candidatePrice * (1m + toleranceRatio);
+    var cluster = candidates
+      .Where(index => listings[index].PricePerUnit >= candidatePrice)
+      .Where(index => listings[index].PricePerUnit <= upperBound)
+      .ToList();
+
+    if (cluster.Count >= Math.Max(1, opts.LowClusterListings))
+      return true;
+
+    var totalQuantity = cluster.Sum(index => (long)listings[index].ItemQuantity);
+    return totalQuantity >= Math.Max(1, opts.LowClusterQuantity);
   }
 
   /// <summary>

@@ -52,6 +52,18 @@ public sealed class Configuration : IPluginConfiguration
 
   public int BaitGuardMinQuantity { get; set; } = 1;
 
+  public float BaitGuardSaleMedianFloorPercent { get; set; } = 50.0f;
+
+  public int BaitGuardLowClusterListings { get; set; } = 3;
+
+  public int BaitGuardLowClusterQuantity { get; set; } = 20;
+
+  public float BaitGuardLowClusterPriceTolerancePercent { get; set; } = 5.0f;
+
+  public int BaitGuardSaleReferenceMinRecentSales { get; set; } = 3;
+
+  public int BaitGuardSaleReferenceMaxSaleAgeDays { get; set; } = 30;
+
   public bool EnableThinMarketAverageFallback { get; set; } = true;
 
   public int ThinMarketMaxListings { get; set; } = 2;

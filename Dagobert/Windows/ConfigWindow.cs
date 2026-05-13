@@ -603,6 +603,121 @@ public sealed class ConfigWindow : Window
       ImGui.EndTooltip();
     }
 
+    ImGui.BeginGroup();
+    ImGui.Text("Sale Median Floor:");
+    ImGui.SameLine();
+    float saleMedianFloor = Plugin.Configuration.BaitGuardSaleMedianFloorPercent;
+    if (ImGui.SliderFloat("##baitGuardSaleMedianFloorPercent", ref saleMedianFloor, 1.0f, 99.0f, "%.1f"))
+    {
+      Plugin.Configuration.BaitGuardSaleMedianFloorPercent = MathF.Round(saleMedianFloor, 1);
+      Plugin.Configuration.Save();
+    }
+    ImGui.SameLine();
+    ImGui.Text("%");
+    ImGui.EndGroup();
+    if (ImGui.IsItemHovered())
+    {
+      ImGui.BeginTooltip();
+      ImGui.SetTooltip("When Universalis has enough recent matching sales, tiny low clusters below this percentage\r\n" +
+                       "of the sale median are skipped. Default 50%.\r\n" +
+                       "Missing or stale sale data keeps the current listing-only bait guard behavior.");
+      ImGui.EndTooltip();
+    }
+
+    ImGui.BeginGroup();
+    ImGui.Text("Low Cluster Listings:");
+    ImGui.SameLine();
+    int lowClusterListings = Plugin.Configuration.BaitGuardLowClusterListings;
+    if (ImGui.SliderInt("##baitGuardLowClusterListings", ref lowClusterListings, 1, 10))
+    {
+      Plugin.Configuration.BaitGuardLowClusterListings = lowClusterListings;
+      Plugin.Configuration.Save();
+    }
+    ImGui.EndGroup();
+    if (ImGui.IsItemHovered())
+    {
+      ImGui.BeginTooltip();
+      ImGui.SetTooltip("A low cluster is accepted when this many listings sit within the low cluster tolerance\r\n" +
+                       "of the selected target. Default 3.");
+      ImGui.EndTooltip();
+    }
+
+    ImGui.BeginGroup();
+    ImGui.Text("Low Cluster Quantity:");
+    ImGui.SameLine();
+    int lowClusterQuantity = Plugin.Configuration.BaitGuardLowClusterQuantity;
+    if (ImGui.SliderInt("##baitGuardLowClusterQuantity", ref lowClusterQuantity, 1, 999))
+    {
+      Plugin.Configuration.BaitGuardLowClusterQuantity = lowClusterQuantity;
+      Plugin.Configuration.Save();
+    }
+    ImGui.EndGroup();
+    if (ImGui.IsItemHovered())
+    {
+      ImGui.BeginTooltip();
+      ImGui.SetTooltip("A low cluster is accepted when its listings contain at least this much total quantity.\r\n" +
+                       "Default 20.");
+      ImGui.EndTooltip();
+    }
+
+    ImGui.BeginGroup();
+    ImGui.Text("Low Cluster Tolerance:");
+    ImGui.SameLine();
+    float lowClusterTolerance = Plugin.Configuration.BaitGuardLowClusterPriceTolerancePercent;
+    if (ImGui.SliderFloat("##baitGuardLowClusterPriceTolerancePercent", ref lowClusterTolerance, 0.0f, 25.0f, "%.1f"))
+    {
+      Plugin.Configuration.BaitGuardLowClusterPriceTolerancePercent = MathF.Round(lowClusterTolerance, 1);
+      Plugin.Configuration.Save();
+    }
+    ImGui.SameLine();
+    ImGui.Text("%");
+    ImGui.EndGroup();
+    if (ImGui.IsItemHovered())
+    {
+      ImGui.BeginTooltip();
+      ImGui.SetTooltip("Listings up to this percentage above the selected low target count as the same low cluster.\r\n" +
+                       "Default 5%.");
+      ImGui.EndTooltip();
+    }
+
+    ImGui.BeginGroup();
+    ImGui.Text("Sale Reference Sales:");
+    ImGui.SameLine();
+    int saleReferenceSales = Plugin.Configuration.BaitGuardSaleReferenceMinRecentSales;
+    if (ImGui.SliderInt("##baitGuardSaleReferenceMinRecentSales", ref saleReferenceSales, 1, 20))
+    {
+      Plugin.Configuration.BaitGuardSaleReferenceMinRecentSales = saleReferenceSales;
+      Plugin.Configuration.Save();
+    }
+    ImGui.EndGroup();
+    if (ImGui.IsItemHovered())
+    {
+      ImGui.BeginTooltip();
+      ImGui.SetTooltip("Universalis must return at least this many recent matching-quality sales before the\r\n" +
+                       "sale median backstop is used. Default 3.");
+      ImGui.EndTooltip();
+    }
+
+    ImGui.BeginGroup();
+    ImGui.Text("Sale Reference Age:");
+    ImGui.SameLine();
+    int saleReferenceAge = Plugin.Configuration.BaitGuardSaleReferenceMaxSaleAgeDays;
+    if (ImGui.SliderInt("##baitGuardSaleReferenceMaxSaleAgeDays", ref saleReferenceAge, 1, 90))
+    {
+      Plugin.Configuration.BaitGuardSaleReferenceMaxSaleAgeDays = saleReferenceAge;
+      Plugin.Configuration.Save();
+    }
+    ImGui.SameLine();
+    ImGui.Text("days");
+    ImGui.EndGroup();
+    if (ImGui.IsItemHovered())
+    {
+      ImGui.BeginTooltip();
+      ImGui.SetTooltip("The newest matching Universalis sale must be no older than this many days before the\r\n" +
+                       "sale median backstop is used. Default 30 days.");
+      ImGui.EndTooltip();
+    }
+
     ImGui.Unindent();
   }
 

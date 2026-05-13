@@ -12,7 +12,16 @@ internal static class Program
     var tests = new (string Name, Func<Task> Run)[]
     {
       ("NQ average uses only NQ history rows", NqAverageUsesOnlyNqHistoryRows),
-      ("HQ average uses only HQ history rows", HqAverageUsesOnlyHqHistoryRows)
+      ("HQ average uses only HQ history rows", HqAverageUsesOnlyHqHistoryRows),
+      ("Bait guard keeps listing-only target without sale reference", BaitGuardKeepsListingOnlyTargetWithoutSaleReference),
+      ("Bait guard skips tiny cluster below sale median floor", BaitGuardSkipsTinyClusterBelowSaleMedianFloor),
+      ("Bait guard accepts below-floor cluster with enough listings", BaitGuardAcceptsBelowFloorClusterWithEnoughListings),
+      ("Bait guard accepts below-floor cluster with enough quantity", BaitGuardAcceptsBelowFloorClusterWithEnoughQuantity),
+      ("Bait guard applies gap promotion before sale reference", BaitGuardAppliesGapPromotionBeforeSaleReference),
+      ("NQ sale reference uses lower-middle matching sale median", NqSaleReferenceUsesLowerMiddleMatchingSaleMedian),
+      ("Sale reference rejects too few matching sales", SaleReferenceRejectsTooFewMatchingSales),
+      ("Sale reference rejects stale newest matching sale", SaleReferenceRejectsStaleNewestMatchingSale),
+      ("Sale reference skips invalid sale rows", SaleReferenceSkipsInvalidSaleRows)
     };
 
     var failures = 0;
@@ -85,6 +94,166 @@ internal static class Program
     AssertEqual(DateTimeOffset.FromUnixTimeSeconds(newestHqSale), price.LatestSaleAt, "HQ latest sale");
   }
 
+  private static Task BaitGuardKeepsListingOnlyTargetWithoutSaleReference()
+  {
+    var listings = CreateListings((100u, 1u), (200u, 1u), (300u, 1u));
+    var target = BaitGuard.SelectTargetIndex(listings, [0, 1, 2], DefaultBaitOptions(), null);
+
+    AssertEqual<int?>(0, target, "listing-only target");
+    return Task.CompletedTask;
+  }
+
+  private static Task BaitGuardSkipsTinyClusterBelowSaleMedianFloor()
+  {
+    var listings = CreateListings((100u, 1u), (105u, 1u), (300u, 1u));
+    var saleReference = new RecentSaleReference(300, 3, DateTimeOffset.UtcNow);
+    var target = BaitGuard.SelectTargetIndex(listings, [0, 1, 2], DefaultBaitOptions(), saleReference);
+
+    AssertEqual<int?>(2, target, "tiny low cluster target");
+    return Task.CompletedTask;
+  }
+
+  private static Task BaitGuardAcceptsBelowFloorClusterWithEnoughListings()
+  {
+    var listings = CreateListings((100u, 1u), (103u, 1u), (105u, 1u), (300u, 1u));
+    var saleReference = new RecentSaleReference(300, 3, DateTimeOffset.UtcNow);
+    var target = BaitGuard.SelectTargetIndex(listings, [0, 1, 2, 3], DefaultBaitOptions(), saleReference);
+
+    AssertEqual<int?>(0, target, "listing-backed low cluster target");
+    return Task.CompletedTask;
+  }
+
+  private static Task BaitGuardAcceptsBelowFloorClusterWithEnoughQuantity()
+  {
+    var listings = CreateListings((100u, 9u), (104u, 12u), (300u, 1u));
+    var saleReference = new RecentSaleReference(300, 3, DateTimeOffset.UtcNow);
+    var target = BaitGuard.SelectTargetIndex(listings, [0, 1, 2], DefaultBaitOptions(), saleReference);
+
+    AssertEqual<int?>(0, target, "quantity-backed low cluster target");
+    return Task.CompletedTask;
+  }
+
+  private static Task BaitGuardAppliesGapPromotionBeforeSaleReference()
+  {
+    var listings = CreateListings((100u, 100u), (300u, 1u), (305u, 1u));
+    var saleReference = new RecentSaleReference(600, 3, DateTimeOffset.UtcNow);
+    var target = BaitGuard.SelectTargetIndex(listings, [0, 1, 2], DefaultBaitOptions(), saleReference);
+
+    AssertEqual<int?>(1, target, "gap-promoted target");
+    return Task.CompletedTask;
+  }
+
+  private static async Task NqSaleReferenceUsesLowerMiddleMatchingSaleMedian()
+  {
+    var now = DateTimeOffset.FromUnixTimeSeconds(1778600000);
+    var provider = CreateProvider(
+      $$"""
+      {
+        "averagePriceNQ": 1000,
+        "averagePriceHQ": 2000,
+        "recentHistory": [
+          { "hq": false, "pricePerUnit": 400, "timestamp": {{now.ToUnixTimeSeconds()}} },
+          { "hq": false, "pricePerUnit": 100, "timestamp": {{now.AddDays(-1).ToUnixTimeSeconds()}} },
+          { "hq": false, "pricePerUnit": 300, "timestamp": {{now.AddDays(-2).ToUnixTimeSeconds()}} },
+          { "hq": false, "pricePerUnit": 200, "timestamp": {{now.AddDays(-3).ToUnixTimeSeconds()}} },
+          { "hq": true, "pricePerUnit": 1, "timestamp": {{now.ToUnixTimeSeconds()}} }
+        ]
+      }
+      """);
+
+    var saleReference = await provider.GetRecentSaleReferenceAsync(34, 3920, false, 3, 30, now, CancellationToken.None);
+
+    var reference = saleReference ?? throw new InvalidOperationException("expected an NQ sale reference");
+    AssertEqual((uint)200, reference.MedianUnitPrice, "NQ sale median");
+    AssertEqual(4, reference.RecentHistoryCount, "NQ sale count");
+    AssertEqual(now, reference.LatestSaleAt, "NQ latest sale");
+  }
+
+  private static async Task SaleReferenceRejectsTooFewMatchingSales()
+  {
+    var now = DateTimeOffset.FromUnixTimeSeconds(1778600000);
+    var provider = CreateProvider(
+      $$"""
+      {
+        "averagePriceNQ": 1000,
+        "recentHistory": [
+          { "hq": false, "pricePerUnit": 100, "timestamp": {{now.ToUnixTimeSeconds()}} },
+          { "hq": true, "pricePerUnit": 100, "timestamp": {{now.ToUnixTimeSeconds()}} }
+        ]
+      }
+      """);
+
+    var saleReference = await provider.GetRecentSaleReferenceAsync(34, 3920, false, 2, 30, now, CancellationToken.None);
+
+    AssertEqual<RecentSaleReference?>(null, saleReference, "too few sale reference");
+  }
+
+  private static async Task SaleReferenceRejectsStaleNewestMatchingSale()
+  {
+    var now = DateTimeOffset.FromUnixTimeSeconds(1778600000);
+    var provider = CreateProvider(
+      $$"""
+      {
+        "averagePriceNQ": 1000,
+        "recentHistory": [
+          { "hq": false, "pricePerUnit": 100, "timestamp": {{now.AddDays(-31).ToUnixTimeSeconds()}} },
+          { "hq": false, "pricePerUnit": 200, "timestamp": {{now.AddDays(-32).ToUnixTimeSeconds()}} },
+          { "hq": false, "pricePerUnit": 300, "timestamp": {{now.AddDays(-33).ToUnixTimeSeconds()}} }
+        ]
+      }
+      """);
+
+    var saleReference = await provider.GetRecentSaleReferenceAsync(34, 3920, false, 3, 30, now, CancellationToken.None);
+
+    AssertEqual<RecentSaleReference?>(null, saleReference, "stale sale reference");
+  }
+
+  private static async Task SaleReferenceSkipsInvalidSaleRows()
+  {
+    var now = DateTimeOffset.FromUnixTimeSeconds(1778600000);
+    var provider = CreateProvider(
+      $$"""
+      {
+        "averagePriceNQ": 1000,
+        "recentHistory": [
+          7,
+          { "hq": false, "pricePerUnit": 999, "timestamp": 999999999999999999 },
+          { "hq": false, "pricePerUnit": 0, "timestamp": {{now.ToUnixTimeSeconds()}} },
+          { "pricePerUnit": 999, "timestamp": {{now.ToUnixTimeSeconds()}} },
+          { "hq": false, "pricePerUnit": 400, "timestamp": {{now.ToUnixTimeSeconds()}} },
+          { "hq": false, "pricePerUnit": 100, "timestamp": {{now.AddDays(-1).ToUnixTimeSeconds()}} },
+          { "hq": false, "pricePerUnit": 200, "timestamp": {{now.AddDays(-2).ToUnixTimeSeconds()}} }
+        ]
+      }
+      """);
+
+    var saleReference = await provider.GetRecentSaleReferenceAsync(34, 3920, false, 3, 30, now, CancellationToken.None);
+
+    var reference = saleReference ?? throw new InvalidOperationException("expected a sale reference");
+    AssertEqual((uint)200, reference.MedianUnitPrice, "sale median with invalid rows");
+    AssertEqual(3, reference.RecentHistoryCount, "valid sale count");
+    AssertEqual(now, reference.LatestSaleAt, "latest valid sale");
+  }
+
+  private static BaitGuard.Options DefaultBaitOptions() => new(
+    Enabled: true,
+    FloorPercent: 30.0f,
+    SampleListings: 5,
+    GapPercent: 50.0f,
+    MinQuantity: 1,
+    SaleMedianFloorPercent: 50.0f,
+    LowClusterListings: 3,
+    LowClusterQuantity: 20,
+    LowClusterPriceTolerancePercent: 5.0f);
+
+  private static List<TestMarketBoardItemListing> CreateListings(
+    params (uint PricePerUnit, uint Quantity)[] listings)
+  {
+    return listings
+      .Select(listing => new TestMarketBoardItemListing(listing.PricePerUnit, listing.Quantity))
+      .ToList();
+  }
+
   private static UniversalisAveragePriceProvider CreateProvider(string json)
   {
     var response = new HttpResponseMessage(HttpStatusCode.OK)
@@ -115,6 +284,10 @@ internal sealed class StaticResponseHandler(HttpResponseMessage response) : Http
     return Task.FromResult(response);
   }
 }
+
+internal sealed record TestMarketBoardItemListing(
+  uint PricePerUnit,
+  uint ItemQuantity) : Dalamud.Game.Network.Structures.IMarketBoardItemListing;
 
 internal sealed class TestPluginLog : IPluginLog
 {

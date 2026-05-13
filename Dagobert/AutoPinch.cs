@@ -33,10 +33,16 @@ namespace Dagobert
     private readonly TaskManager _taskManager;
     private Dictionary<string, int?> _cachedPrices = [];
 
-    public AutoPinch(IAverageSalePriceProvider averagePriceProvider, MarketBoardRequestTracker marketBoardRequestTracker)
+    public AutoPinch(
+      IAverageSalePriceProvider averagePriceProvider,
+      IRecentSaleReferenceProvider saleReferenceProvider,
+      MarketBoardRequestTracker marketBoardRequestTracker)
       : base("Ascended Dagobert", ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.AlwaysUseWindowPadding | ImGuiWindowFlags.AlwaysAutoResize, true)
     {
-      _mbHandler = new MarketBoardHandler(averagePriceProvider, marketBoardRequestTracker);
+      _mbHandler = new MarketBoardHandler(
+        averagePriceProvider,
+        saleReferenceProvider,
+        marketBoardRequestTracker);
       _mbHandler.NewPriceReceived += MBHandler_NewPriceReceived;
 
       // window
