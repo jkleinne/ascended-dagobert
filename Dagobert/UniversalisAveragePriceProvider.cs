@@ -59,6 +59,12 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
       itemId,
       ListingsQueryValue,
       entries);
+    log.Debug(
+      "Universalis average price request started for item {ItemId} on world {WorldId}, hq {IsHq}, entries {Entries}",
+      itemId,
+      worldId,
+      isHq,
+      entries);
 
     try
     {
@@ -80,7 +86,9 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
         .ParseAsync(responseStream, cancellationToken: cancellationToken)
         .ConfigureAwait(false);
 
-      return ParseAveragePrice(document.RootElement, isHq);
+      var averagePrice = ParseAveragePrice(document.RootElement, isHq);
+      LogAveragePriceResult(worldId, itemId, isHq, averagePrice);
+      return averagePrice;
     }
     catch (OperationCanceledException)
     {
@@ -111,6 +119,14 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
       itemId,
       ListingsQueryValue,
       entries);
+    log.Debug(
+      "Universalis sale reference request started for item {ItemId} on world {WorldId}, hq {IsHq}, entries {Entries}, minimum sales {MinimumSales}, maximum age days {MaximumAgeDays}",
+      itemId,
+      worldId,
+      isHq,
+      entries,
+      minRecentSales,
+      maxSaleAgeDays);
 
     try
     {
@@ -132,7 +148,9 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
         .ParseAsync(responseStream, cancellationToken: cancellationToken)
         .ConfigureAwait(false);
 
-      return ParseRecentSaleReference(document.RootElement, isHq, minRecentSales, maxSaleAgeDays, now);
+      var saleReference = ParseRecentSaleReference(document.RootElement, isHq, minRecentSales, maxSaleAgeDays, now);
+      LogSaleReferenceResult(worldId, itemId, isHq, saleReference);
+      return saleReference;
     }
     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
     {
@@ -148,6 +166,58 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
       log.Warning(ex, "Universalis sale reference request failed for item {ItemId} on world {WorldId}", itemId, worldId);
       return null;
     }
+  }
+
+  private void LogAveragePriceResult(
+    uint worldId,
+    uint itemId,
+    bool isHq,
+    ThinMarketAveragePrice? averagePrice)
+  {
+    if (averagePrice is null)
+    {
+      log.Debug(
+        "Universalis average price request returned no usable price for item {ItemId} on world {WorldId}, hq {IsHq}",
+        itemId,
+        worldId,
+        isHq);
+      return;
+    }
+
+    log.Debug(
+      "Universalis average price request parsed item {ItemId} on world {WorldId}, hq {IsHq}, unit price {UnitPrice}, recent sales {RecentSales}, latest sale {LatestSaleAt}",
+      itemId,
+      worldId,
+      isHq,
+      averagePrice.Value.UnitPrice,
+      averagePrice.Value.RecentHistoryCount,
+      averagePrice.Value.LatestSaleAt);
+  }
+
+  private void LogSaleReferenceResult(
+    uint worldId,
+    uint itemId,
+    bool isHq,
+    RecentSaleReference? saleReference)
+  {
+    if (saleReference is null)
+    {
+      log.Debug(
+        "Universalis sale reference request returned no usable sale reference for item {ItemId} on world {WorldId}, hq {IsHq}",
+        itemId,
+        worldId,
+        isHq);
+      return;
+    }
+
+    log.Debug(
+      "Universalis sale reference request parsed item {ItemId} on world {WorldId}, hq {IsHq}, median unit price {MedianUnitPrice}, recent sales {RecentSales}, latest sale {LatestSaleAt}",
+      itemId,
+      worldId,
+      isHq,
+      saleReference.Value.MedianUnitPrice,
+      saleReference.Value.RecentHistoryCount,
+      saleReference.Value.LatestSaleAt);
   }
 
   private static ThinMarketAveragePrice? ParseAveragePrice(JsonElement root, bool isHq)

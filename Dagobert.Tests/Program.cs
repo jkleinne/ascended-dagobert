@@ -21,7 +21,9 @@ internal static class Program
       ("NQ sale reference uses lower-middle matching sale median", NqSaleReferenceUsesLowerMiddleMatchingSaleMedian),
       ("Sale reference rejects too few matching sales", SaleReferenceRejectsTooFewMatchingSales),
       ("Sale reference rejects stale newest matching sale", SaleReferenceRejectsStaleNewestMatchingSale),
-      ("Sale reference skips invalid sale rows", SaleReferenceSkipsInvalidSaleRows)
+      ("Sale reference skips invalid sale rows", SaleReferenceSkipsInvalidSaleRows),
+      ("Price request state remains active until current request finishes", PriceRequestStateRemainsActiveUntilCurrentRequestFinishes),
+      ("Price request state ignores stale request finish", PriceRequestStateIgnoresStaleRequestFinish)
     };
 
     var failures = 0;
@@ -235,6 +237,39 @@ internal static class Program
     AssertEqual(now, reference.LatestSaleAt, "latest valid sale");
   }
 
+  private static Task PriceRequestStateRemainsActiveUntilCurrentRequestFinishes()
+  {
+    var state = new MarketBoardPriceRequestState();
+
+    var version = state.BeginRequest();
+
+    AssertEqual(true, state.IsActive, "active state after request starts");
+    AssertEqual(version, state.Version, "current request version");
+
+    state.FinishRequest(version);
+
+    AssertEqual(false, state.IsActive, "active state after request finishes");
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceRequestStateIgnoresStaleRequestFinish()
+  {
+    var state = new MarketBoardPriceRequestState();
+
+    var firstVersion = state.BeginRequest();
+    var secondVersion = state.BeginRequest();
+
+    state.FinishRequest(firstVersion);
+
+    AssertEqual(true, state.IsActive, "active state after stale request finish");
+    AssertEqual(secondVersion, state.Version, "current request version after stale finish");
+
+    state.FinishRequest(secondVersion);
+
+    AssertEqual(false, state.IsActive, "active state after current request finishes");
+    return Task.CompletedTask;
+  }
+
   private static BaitGuard.Options DefaultBaitOptions() => new(
     Enabled: true,
     FloorPercent: 30.0f,
@@ -291,6 +326,10 @@ internal sealed record TestMarketBoardItemListing(
 
 internal sealed class TestPluginLog : IPluginLog
 {
+  public void Debug(string messageTemplate, params object?[] propertyValues)
+  {
+  }
+
   public void Warning(string messageTemplate, params object?[] propertyValues)
   {
   }
