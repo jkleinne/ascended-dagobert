@@ -355,14 +355,14 @@ namespace Dagobert
         if (listingOnlyTarget is null)
           return null;
 
-        RecentSaleReference? saleReference = null;
+        RecentSaleReference? selfSaleReference = null;
         if (opts.Enabled)
-          saleReference = await GetRecentSaleReferenceAsync(requestVersion);
+          selfSaleReference = await GetRecentSaleReferenceAsync(requestVersion);
 
         if (requestVersion != _requestVersion)
           return null;
 
-        int? target = BaitGuard.SelectTargetIndex(_bufferedListings, hqEligible, opts, saleReference);
+        int? target = BaitGuard.SelectTargetIndex(_bufferedListings, hqEligible, opts, selfSaleReference);
         if (target is null)
           return null;
 
@@ -414,14 +414,14 @@ namespace Dagobert
           });
       }
 
-      RecentSaleReference? saleReference = null;
+      RecentSaleReference? competitorSaleReference = null;
       if (opts.Enabled)
-        saleReference = await GetRecentSaleReferenceAsync(requestVersion);
+        competitorSaleReference = await GetRecentSaleReferenceAsync(requestVersion);
 
       if (requestVersion != _requestVersion)
         return null;
 
-      int? competitorIdx = BaitGuard.SelectTargetIndex(_bufferedListings, competitors, opts, saleReference);
+      int? competitorIdx = BaitGuard.SelectTargetIndex(_bufferedListings, competitors, opts, competitorSaleReference);
       if (competitorIdx is null)
       {
         if (ownLowest is null)
