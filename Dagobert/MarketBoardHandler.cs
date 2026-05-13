@@ -119,6 +119,9 @@ namespace Dagobert
       if (!_newRequest)
         return;
 
+      if (IsPricePending)
+        return;
+
       if (currentOfferings.RequestId == _lastRequestId)
       {
         FinishPriceRequest(NoPrice(new PricingDebugDetail(
@@ -180,7 +183,18 @@ namespace Dagobert
         return;
       }
 
-      var priceDecision = await DecidePriceAsync(hqEligible, requestVersion);
+      PricingDecisionResult? priceDecision;
+      IsPricePending = true;
+      try
+      {
+        priceDecision = await DecidePriceAsync(hqEligible, requestVersion);
+      }
+      catch
+      {
+        if (requestVersion == _requestVersion)
+          IsPricePending = false;
+        throw;
+      }
       if (requestVersion != _requestVersion)
         return;
 
