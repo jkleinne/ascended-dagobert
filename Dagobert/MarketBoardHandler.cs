@@ -16,6 +16,7 @@ namespace Dagobert
   internal sealed class MarketBoardHandler : IDisposable
   {
     private readonly IAverageSalePriceProvider _averageSalePriceProvider;
+    private readonly IRecentSaleReferenceProvider _saleReferenceProvider;
     private readonly MarketBoardRequestTracker _marketBoardRequestTracker;
     private readonly Lumina.Excel.ExcelSheet<Item> _items;
     private bool _newRequest;
@@ -37,9 +38,11 @@ namespace Dagobert
 
     public MarketBoardHandler(
       IAverageSalePriceProvider averageSalePriceProvider,
+      IRecentSaleReferenceProvider saleReferenceProvider,
       MarketBoardRequestTracker marketBoardRequestTracker)
     {
       _averageSalePriceProvider = averageSalePriceProvider;
+      _saleReferenceProvider = saleReferenceProvider;
       _marketBoardRequestTracker = marketBoardRequestTracker;
       _items = Svc.Data.GetExcelSheet<Item>();
 
@@ -177,7 +180,10 @@ namespace Dagobert
         return;
       }
 
-      var priceDecision = DecidePrice(hqEligible);
+      var priceDecision = await DecidePriceAsync(hqEligible, requestVersion);
+      if (requestVersion != _requestVersion)
+        return;
+
       if (priceDecision is null)
       {
         FinishPriceRequest(NoPrice(new PricingDebugDetail(
@@ -256,6 +262,33 @@ namespace Dagobert
       }
     }
 
+    private async Task<RecentSaleReference?> GetRecentSaleReferenceAsync(int requestVersion)
+    {
+      if (!Plugin.PlayerState.IsLoaded || _currentItemId == 0)
+        return null;
+
+      _averagePriceRequestCancellation = new CancellationTokenSource();
+      try
+      {
+        return await _saleReferenceProvider.GetRecentSaleReferenceAsync(
+          Plugin.PlayerState.HomeWorld.RowId,
+          _currentItemId,
+          _useHq,
+          Math.Clamp(Plugin.Configuration.BaitGuardSaleReferenceMinRecentSales, 1, 20),
+          Math.Clamp(Plugin.Configuration.BaitGuardSaleReferenceMaxSaleAgeDays, 1, 90),
+          DateTimeOffset.UtcNow,
+          _averagePriceRequestCancellation.Token);
+      }
+      finally
+      {
+        if (requestVersion == _requestVersion)
+        {
+          _averagePriceRequestCancellation.Dispose();
+          _averagePriceRequestCancellation = null;
+        }
+      }
+    }
+
     private static PricingDecisionResult ApplyThinMarketDecision(
       ThinMarketPricingDecision decision,
       ThinMarketListingContext thinMarket,
@@ -298,13 +331,24 @@ namespace Dagobert
       return Undercut(floorPrice);
     }
 
-    private PricingDecisionResult? DecidePrice(List<int> hqEligible)
+    private async Task<PricingDecisionResult?> DecidePriceAsync(List<int> hqEligible, int requestVersion)
     {
       var opts = BuildOptions();
 
       if (Plugin.Configuration.UndercutSelf)
       {
-        int? target = BaitGuard.SelectTargetIndex(_bufferedListings, hqEligible, opts);
+        int? listingOnlyTarget = BaitGuard.SelectTargetIndex(_bufferedListings, hqEligible, opts);
+        if (listingOnlyTarget is null)
+          return null;
+
+        RecentSaleReference? saleReference = null;
+        if (opts.Enabled)
+          saleReference = await GetRecentSaleReferenceAsync(requestVersion);
+
+        if (requestVersion != _requestVersion)
+          return null;
+
+        int? target = BaitGuard.SelectTargetIndex(_bufferedListings, hqEligible, opts, saleReference);
         if (target is null)
           return null;
 
@@ -325,8 +369,45 @@ namespace Dagobert
         ? null
         : ownIndices.Min(i => _bufferedListings[i].PricePerUnit);
 
-      int? competitorIdx = BaitGuard.SelectTargetIndex(_bufferedListings, competitors, opts);
+      int? listingOnlyCompetitorIdx = BaitGuard.SelectTargetIndex(_bufferedListings, competitors, opts);
 
+      if (listingOnlyCompetitorIdx is null)
+      {
+        if (ownLowest is null)
+          return null;
+
+        return new PricingDecisionResult(
+          (int)ownLowest.Value,
+          new PricingDebugDetail(PricingDebugReason.OwnPriceAlreadyLowest)
+          {
+            OwnLowestPrice = (int)ownLowest.Value,
+            SelectedPrice = (int)ownLowest.Value,
+            ListingCount = hqEligible.Count
+          });
+      }
+
+      var listingOnlyCompetitorPrice = _bufferedListings[listingOnlyCompetitorIdx.Value].PricePerUnit;
+      if (ownLowest is not null && ownLowest.Value <= listingOnlyCompetitorPrice)
+      {
+        return new PricingDecisionResult(
+          (int)ownLowest.Value,
+          new PricingDebugDetail(PricingDebugReason.OwnPriceAlreadyLowest)
+          {
+            OwnLowestPrice = (int)ownLowest.Value,
+            CompetitorPrice = (int)listingOnlyCompetitorPrice,
+            SelectedPrice = (int)ownLowest.Value,
+            ListingCount = hqEligible.Count
+          });
+      }
+
+      RecentSaleReference? saleReference = null;
+      if (opts.Enabled)
+        saleReference = await GetRecentSaleReferenceAsync(requestVersion);
+
+      if (requestVersion != _requestVersion)
+        return null;
+
+      int? competitorIdx = BaitGuard.SelectTargetIndex(_bufferedListings, competitors, opts, saleReference);
       if (competitorIdx is null)
       {
         if (ownLowest is null)
@@ -424,7 +505,11 @@ namespace Dagobert
       FloorPercent: Plugin.Configuration.BaitGuardFloorPercent,
       SampleListings: Plugin.Configuration.BaitGuardSampleListings,
       GapPercent: Plugin.Configuration.BaitGuardGapPercent,
-      MinQuantity: Plugin.Configuration.BaitGuardMinQuantity);
+      MinQuantity: Plugin.Configuration.BaitGuardMinQuantity,
+      SaleMedianFloorPercent: Math.Clamp(Plugin.Configuration.BaitGuardSaleMedianFloorPercent, 1.0f, 99.0f),
+      LowClusterListings: Math.Clamp(Plugin.Configuration.BaitGuardLowClusterListings, 1, 10),
+      LowClusterQuantity: Math.Clamp(Plugin.Configuration.BaitGuardLowClusterQuantity, 1, 999),
+      LowClusterPriceTolerancePercent: Math.Clamp(Plugin.Configuration.BaitGuardLowClusterPriceTolerancePercent, 0.0f, 25.0f));
 
     private static ThinMarketPricingOptions BuildThinMarketOptions() => new(
       Enabled: Plugin.Configuration.EnableThinMarketAverageFallback,

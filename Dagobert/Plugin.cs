@@ -59,9 +59,12 @@ public sealed class Plugin : IDalamudPlugin
 
     ECommonsMain.Init(PluginInterface, this);
     _universalisHttpClient = CreateUniversalisHttpClient();
-    var averagePriceProvider = new UniversalisAveragePriceProvider(_universalisHttpClient, Log);
+    var universalisPriceProvider = new UniversalisAveragePriceProvider(_universalisHttpClient, Log);
     _marketBoardRequestTracker = new MarketBoardRequestTracker(GameInteropProvider, Log);
-    _autoPinch = new AutoPinch(averagePriceProvider, _marketBoardRequestTracker);
+    _autoPinch = new AutoPinch(
+      universalisPriceProvider,
+      universalisPriceProvider,
+      _marketBoardRequestTracker);
     WindowSystem.AddWindow(_autoPinch);
   }
 
