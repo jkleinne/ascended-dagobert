@@ -24,6 +24,7 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
   private const string AveragePriceNqField = "averagePriceNQ";
   private const string AveragePriceHqField = "averagePriceHQ";
   private const string RecentHistoryField = "recentHistory";
+  private const string HqField = "hq";
   private const string TimestampField = "timestamp";
 
   public async Task<ThinMarketAveragePrice?> GetAverageSalePriceAsync(
@@ -89,6 +90,9 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
     {
       foreach (var sale in recentHistory.EnumerateArray())
       {
+        if (!IsMatchingQualitySale(sale, isHq))
+          continue;
+
         recentHistoryCount++;
         if (!sale.TryGetProperty(TimestampField, out var timestamp) ||
             !timestamp.TryGetInt64(out var unixTimestamp))
@@ -101,6 +105,15 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
     }
 
     return new ThinMarketAveragePrice(unitPrice, recentHistoryCount, latestSaleAt);
+  }
+
+  private static bool IsMatchingQualitySale(JsonElement sale, bool isHq)
+  {
+    if (!sale.TryGetProperty(HqField, out var hq) ||
+        hq.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+      return false;
+
+    return hq.GetBoolean() == isHq;
   }
 
   private static bool TryGetPositiveUInt(JsonElement root, string propertyName, out uint value)

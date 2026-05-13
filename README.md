@@ -28,7 +28,7 @@ Three branches apply once a market is classified as thin (≤ `Max Listings`, de
 2. **Thin board, floor within tolerance → undercut the floor.** One or two listings whose floor sits within `Average Tolerance` of the average (default ±40%) are treated as honest, and the bot undercuts the floor as it normally would.
 3. **Thin board, floor outside tolerance → skip.** A floor too far below the average is treated as bait and the bot holds off — the average is never used to bid against a decoy.
 
-The average is only trusted when Universalis returns at least `Min Recent Sales` rows (default 3) and the newest sale is no older than `Max Sale Age` (default 30 days). All thresholds live in the "Thin Market Average Fallback" section of the config window, and the feature can be toggled off entirely.
+The average is only trusted when Universalis returns at least `Min Recent Sales` rows for the requested quality (default 3) and the newest matching sale is no older than `Max Sale Age` (default 30 days). All thresholds live in the "Thin Market Average Fallback" section of the config window, and the feature can be toggled off entirely.
 
 Defaults: max 2 listings, 40% tolerance, 3 recent sales, 30-day sale age.
 
