@@ -17,6 +17,7 @@ internal static class Program
       ("Bait guard skips tiny cluster below sale median floor", BaitGuardSkipsTinyClusterBelowSaleMedianFloor),
       ("Bait guard accepts below-floor cluster with enough listings", BaitGuardAcceptsBelowFloorClusterWithEnoughListings),
       ("Bait guard accepts below-floor cluster with enough quantity", BaitGuardAcceptsBelowFloorClusterWithEnoughQuantity),
+      ("Bait guard applies gap promotion before sale reference", BaitGuardAppliesGapPromotionBeforeSaleReference),
       ("NQ sale reference uses lower-middle matching sale median", NqSaleReferenceUsesLowerMiddleMatchingSaleMedian),
       ("Sale reference rejects too few matching sales", SaleReferenceRejectsTooFewMatchingSales),
       ("Sale reference rejects stale newest matching sale", SaleReferenceRejectsStaleNewestMatchingSale),
@@ -129,6 +130,16 @@ internal static class Program
     var target = BaitGuard.SelectTargetIndex(listings, [0, 1, 2], DefaultBaitOptions(), saleReference);
 
     AssertEqual<int?>(0, target, "quantity-backed low cluster target");
+    return Task.CompletedTask;
+  }
+
+  private static Task BaitGuardAppliesGapPromotionBeforeSaleReference()
+  {
+    var listings = CreateListings((100u, 100u), (300u, 1u), (305u, 1u));
+    var saleReference = new RecentSaleReference(600, 3, DateTimeOffset.UtcNow);
+    var target = BaitGuard.SelectTargetIndex(listings, [0, 1, 2], DefaultBaitOptions(), saleReference);
+
+    AssertEqual<int?>(1, target, "gap-promoted target");
     return Task.CompletedTask;
   }
 
