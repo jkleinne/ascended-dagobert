@@ -7,6 +7,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Dagobert", "Dagobert\Dagobe
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ECommons", "ECommons\ECommons\ECommons.csproj", "{1E7FE15C-61ED-4802-BD93-82A663BF1DC4}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Dagobert.Tests", "Dagobert.Tests\Dagobert.Tests.csproj", "{C5DB0692-34C6-45F4-B0C0-A38B8A9854FB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -31,6 +33,14 @@ Global
 		{1E7FE15C-61ED-4802-BD93-82A663BF1DC4}.Release|x64.Build.0 = Release|x64
 		{1E7FE15C-61ED-4802-BD93-82A663BF1DC4}.ReleaseForms|x64.ActiveCfg = ReleaseForms|x64
 		{1E7FE15C-61ED-4802-BD93-82A663BF1DC4}.ReleaseForms|x64.Build.0 = ReleaseForms|x64
+		{C5DB0692-34C6-45F4-B0C0-A38B8A9854FB}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C5DB0692-34C6-45F4-B0C0-A38B8A9854FB}.Debug|x64.Build.0 = Debug|Any CPU
+		{C5DB0692-34C6-45F4-B0C0-A38B8A9854FB}.DebugForms|x64.ActiveCfg = Debug|Any CPU
+		{C5DB0692-34C6-45F4-B0C0-A38B8A9854FB}.DebugForms|x64.Build.0 = Debug|Any CPU
+		{C5DB0692-34C6-45F4-B0C0-A38B8A9854FB}.Release|x64.ActiveCfg = Release|Any CPU
+		{C5DB0692-34C6-45F4-B0C0-A38B8A9854FB}.Release|x64.Build.0 = Release|Any CPU
+		{C5DB0692-34C6-45F4-B0C0-A38B8A9854FB}.ReleaseForms|x64.ActiveCfg = Release|Any CPU
+		{C5DB0692-34C6-45F4-B0C0-A38B8A9854FB}.ReleaseForms|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../Dagobert/ThinMarketPricePolicy.cs" Link="Production/ThinMarketPricePolicy.cs" />
+    <Compile Include="../Dagobert/UniversalisAveragePriceProvider.cs" Link="Production/UniversalisAveragePriceProvider.cs" />
+  </ItemGroup>
+</Project>
