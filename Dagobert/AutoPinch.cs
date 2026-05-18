@@ -612,8 +612,8 @@ namespace Dagobert
       }
 
       var eventHandle = Svc.AddonEventManager.AddEvent(
-        (nint)&addon->AtkUnitBase,
-        (nint)ownerNode,
+        new IntPtr(&addon->AtkUnitBase),
+        new IntPtr(ownerNode),
         AddonEventType.MouseDown,
         ComparePriceMouseDown);
       if (eventHandle == null)
