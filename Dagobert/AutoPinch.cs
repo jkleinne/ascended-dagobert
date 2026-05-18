@@ -1,4 +1,6 @@
-﻿using Dalamud.Game.Addon.Lifecycle;
+﻿using Dalamud.Game.Addon.Events;
+using Dalamud.Game.Addon.Events.EventDataTypes;
+using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.ClientState.Keys;
 using Dalamud.Interface.Utility;
@@ -33,6 +35,7 @@ namespace Dagobert
     private bool _loggedMarketPriceWait;
     private readonly TaskManager _taskManager;
     private Dictionary<string, int?> _cachedPrices = [];
+    private const uint ComparePricesButtonId = 4;
 
     public AutoPinch(
       IAverageSalePriceProvider averagePriceProvider,
@@ -76,12 +79,12 @@ namespace Dagobert
         Plugin.Configuration.Save();
       }
 
-      Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, RetainerSellPostSetup);
+      Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, "RetainerSell", RetainerSellPostSetup);
     }
 
     public void Dispose()
     {
-      Svc.AddonLifecycle.UnregisterListener(AddonEvent.PostSetup, RetainerSellPostSetup);
+      Svc.AddonLifecycle.UnregisterListener(AddonEvent.PostSetup, "RetainerSell", RetainerSellPostSetup);
       _mbHandler.NewPriceReceived -= MBHandler_NewPriceReceived;
       _mbHandler.Dispose();
     }
@@ -546,11 +549,7 @@ namespace Dagobert
       }
       finally
       {
-        _oldPrice = null;
-        _newPrice = null;
-        _pricingDebugDetail = null;
-        _skipCurrentItem = false;
-        _loggedMarketPriceWait = false;
+        ClearCurrentPriceRequestState();
       }
     }
 
@@ -576,8 +575,14 @@ namespace Dagobert
       }
     }
 
-    private void RetainerSellPostSetup(AddonEvent type, AddonArgs args)
+    private unsafe void RetainerSellPostSetup(AddonEvent type, AddonArgs args)
     {
+      var addon = (AddonRetainerSell*)args.Addon.Address;
+      if (!GenericHelpers.IsAddonReady(&addon->AtkUnitBase))
+        return;
+
+      RegisterComparePricePostPinchHandler(addon);
+
       if (_taskManager.IsBusy)
         return;
 
@@ -590,6 +595,66 @@ namespace Dagobert
         _taskManager.DelayNext(Plugin.Configuration.MarketBoardKeepOpenMS);
         _taskManager.Enqueue(WaitForMarketPrice, $"WaitForMarketPricePosted");
         _taskManager.Enqueue(SetNewPrice, $"SetNewPricePosted");
+      }
+    }
+
+    private unsafe void RegisterComparePricePostPinchHandler(AddonRetainerSell* addon)
+    {
+      var comparePricesButton = addon->GetComponentButtonById(ComparePricesButtonId);
+      var ownerNode = comparePricesButton == null
+        ? null
+        : comparePricesButton->OwnerNode;
+
+      if (ownerNode == null)
+      {
+        Svc.Log.Debug("RetainerSell compare prices button owner node was not available");
+        return;
+      }
+
+      var eventHandle = Svc.AddonEventManager.AddEvent(
+        (nint)&addon->AtkUnitBase,
+        (nint)ownerNode,
+        AddonEventType.MouseDown,
+        ComparePriceMouseDown);
+      if (eventHandle == null)
+        Svc.Log.Debug("RetainerSell compare prices mouse down event was not added");
+    }
+
+    private unsafe void ComparePriceMouseDown(AddonEventType eventType, AddonEventData eventData)
+    {
+      if (eventData is not AddonMouseEventData { IsLeftClick: true })
+        return;
+
+      var isSellAddonReady =
+        GenericHelpers.TryGetAddonByName<AddonRetainerSell>("RetainerSell", out var addon)
+        && GenericHelpers.IsAddonReady(&addon->AtkUnitBase);
+
+      var actions = PostPinchWorkflow.PlanActions(
+        Plugin.Configuration.EnablePostPinchkey,
+        Plugin.KeyState[Plugin.Configuration.PostPinchKey],
+        _taskManager.IsBusy,
+        isSellAddonReady);
+
+      foreach (var action in actions)
+        ExecutePostPinchWorkflowAction(action);
+    }
+
+    private void ExecutePostPinchWorkflowAction(PostPinchWorkflowAction action)
+    {
+      switch (action)
+      {
+        case PostPinchWorkflowAction.PreparePriceRequest:
+          ClearCurrentPriceRequestState();
+          _mbHandler.PrepareForPriceRequest();
+          break;
+        case PostPinchWorkflowAction.WaitForMarketPrice:
+          _taskManager.Enqueue(WaitForMarketPrice, "WaitForMarketPricePostCompare");
+          break;
+        case PostPinchWorkflowAction.SetNewPrice:
+          _taskManager.Enqueue(SetNewPrice, "SetNewPricePostCompare");
+          break;
+        default:
+          throw new ArgumentOutOfRangeException(nameof(action), action, null);
       }
     }
 
@@ -676,6 +741,15 @@ namespace Dagobert
       _newPrice = null;
       _pricingDebugDetail = null;
       _cachedPrices = [];
+      _skipCurrentItem = false;
+      _loggedMarketPriceWait = false;
+    }
+
+    private void ClearCurrentPriceRequestState()
+    {
+      _oldPrice = null;
+      _newPrice = null;
+      _pricingDebugDetail = null;
       _skipCurrentItem = false;
       _loggedMarketPriceWait = false;
     }
