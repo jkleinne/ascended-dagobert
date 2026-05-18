@@ -630,10 +630,10 @@ namespace Dagobert
         && GenericHelpers.IsAddonReady(&addon->AtkUnitBase);
 
       var actions = PostPinchWorkflow.PlanActions(
-        Plugin.Configuration.EnablePostPinchkey,
-        Plugin.KeyState[Plugin.Configuration.PostPinchKey],
-        _taskManager.IsBusy,
-        isSellAddonReady);
+        isFeatureEnabled: Plugin.Configuration.EnablePostPinchkey,
+        isPostPinchKeyHeld: Plugin.KeyState[Plugin.Configuration.PostPinchKey],
+        isTaskManagerBusy: _taskManager.IsBusy,
+        isSellAddonReady: isSellAddonReady);
 
       foreach (var action in actions)
         ExecutePostPinchWorkflowAction(action);
