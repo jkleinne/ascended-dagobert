@@ -614,22 +614,20 @@ namespace Dagobert
       var eventHandle = Svc.AddonEventManager.AddEvent(
         new IntPtr(&addon->AtkUnitBase),
         new IntPtr(ownerNode),
-        AddonEventType.MouseDown,
-        ComparePriceMouseDown);
+        AddonEventType.ButtonPress,
+        ComparePriceButtonPress);
       if (eventHandle == null)
-        Svc.Log.Debug("RetainerSell compare prices mouse down event was not added");
+        Svc.Log.Debug("RetainerSell compare prices button press event was not added");
     }
 
-    private unsafe void ComparePriceMouseDown(AddonEventType eventType, AddonEventData eventData)
+    private unsafe void ComparePriceButtonPress(AddonEventType eventType, AddonEventData _)
     {
-      if (eventData is not AddonMouseEventData { IsLeftClick: true })
-        return;
-
       var isSellAddonReady =
         GenericHelpers.TryGetAddonByName<AddonRetainerSell>("RetainerSell", out var addon)
         && GenericHelpers.IsAddonReady(&addon->AtkUnitBase);
 
       var actions = PostPinchWorkflow.PlanActions(
+        isCompareButtonPress: eventType == AddonEventType.ButtonPress,
         isFeatureEnabled: Plugin.Configuration.EnablePostPinchkey,
         isPostPinchKeyHeld: Plugin.KeyState[Plugin.Configuration.PostPinchKey],
         isTaskManagerBusy: _taskManager.IsBusy,

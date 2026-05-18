@@ -23,12 +23,13 @@ internal static class PostPinchWorkflow
   ];
 
   internal static IReadOnlyList<PostPinchWorkflowAction> PlanActions(
+    bool isCompareButtonPress,
     bool isFeatureEnabled,
     bool isPostPinchKeyHeld,
     bool isTaskManagerBusy,
     bool isSellAddonReady)
   {
-    if (!isFeatureEnabled || !isPostPinchKeyHeld || isTaskManagerBusy || !isSellAddonReady)
+    if (!isCompareButtonPress || !isFeatureEnabled || !isPostPinchKeyHeld || isTaskManagerBusy || !isSellAddonReady)
       return NoActions;
 
     return StartActions;

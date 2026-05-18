@@ -23,6 +23,7 @@ internal static class Program
       ("Sale reference rejects stale newest matching sale", SaleReferenceRejectsStaleNewestMatchingSale),
       ("Sale reference skips invalid sale rows", SaleReferenceSkipsInvalidSaleRows),
       ("Post pinch workflow starts with prepare before wait and set", PostPinchWorkflowStartsWithPrepareBeforeWaitAndSet),
+      ("Post pinch workflow ignores non button press events", PostPinchWorkflowIgnoresNonButtonPressEvents),
       ("Post pinch workflow ignores missing key press", PostPinchWorkflowIgnoresMissingKeyPress),
       ("Post pinch workflow ignores busy task manager", PostPinchWorkflowIgnoresBusyTaskManager),
       ("Post pinch workflow ignores disabled feature", PostPinchWorkflowIgnoresDisabledFeature),
@@ -245,6 +246,7 @@ internal static class Program
   private static Task PostPinchWorkflowStartsWithPrepareBeforeWaitAndSet()
   {
     var actions = PostPinchWorkflow.PlanActions(
+      isCompareButtonPress: true,
       isFeatureEnabled: true,
       isPostPinchKeyHeld: true,
       isTaskManagerBusy: false,
@@ -261,9 +263,23 @@ internal static class Program
     return Task.CompletedTask;
   }
 
+  private static Task PostPinchWorkflowIgnoresNonButtonPressEvents()
+  {
+    var actions = PostPinchWorkflow.PlanActions(
+      isCompareButtonPress: false,
+      isFeatureEnabled: true,
+      isPostPinchKeyHeld: true,
+      isTaskManagerBusy: false,
+      isSellAddonReady: true);
+
+    AssertSequenceEqual([], actions, "post pinch actions for non button press");
+    return Task.CompletedTask;
+  }
+
   private static Task PostPinchWorkflowIgnoresMissingKeyPress()
   {
     var actions = PostPinchWorkflow.PlanActions(
+      isCompareButtonPress: true,
       isFeatureEnabled: true,
       isPostPinchKeyHeld: false,
       isTaskManagerBusy: false,
@@ -276,6 +292,7 @@ internal static class Program
   private static Task PostPinchWorkflowIgnoresBusyTaskManager()
   {
     var actions = PostPinchWorkflow.PlanActions(
+      isCompareButtonPress: true,
       isFeatureEnabled: true,
       isPostPinchKeyHeld: true,
       isTaskManagerBusy: true,
@@ -288,6 +305,7 @@ internal static class Program
   private static Task PostPinchWorkflowIgnoresDisabledFeature()
   {
     var actions = PostPinchWorkflow.PlanActions(
+      isCompareButtonPress: true,
       isFeatureEnabled: false,
       isPostPinchKeyHeld: true,
       isTaskManagerBusy: false,
@@ -300,6 +318,7 @@ internal static class Program
   private static Task PostPinchWorkflowIgnoresUnavailableSellAddon()
   {
     var actions = PostPinchWorkflow.PlanActions(
+      isCompareButtonPress: true,
       isFeatureEnabled: true,
       isPostPinchKeyHeld: true,
       isTaskManagerBusy: false,
