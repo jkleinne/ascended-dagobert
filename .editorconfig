@@ -1,0 +1,28 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.cs]
+indent_style = space
+indent_size = 2
+dotnet_style_qualification_for_event = true:silent
+dotnet_style_qualification_for_field = true:silent
+dotnet_style_qualification_for_property = true:silent
+dotnet_style_qualification_for_method = true:silent
+
+# Error paths should be handled deliberately.
+dotnet_diagnostic.CA1031.severity = warning
+
+# Public boundary inputs should be validated before use.
+dotnet_diagnostic.CA1062.severity = warning
+
+# Disposable ownership should remain explicit.
+dotnet_diagnostic.CA2000.severity = warning
+
+# Avoid unused public surface and dead code.
+dotnet_diagnostic.CA1812.severity = warning
+dotnet_diagnostic.CA1801.severity = warning

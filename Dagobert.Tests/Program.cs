@@ -22,6 +22,11 @@ internal static class Program
       ("Sale reference rejects too few matching sales", SaleReferenceRejectsTooFewMatchingSales),
       ("Sale reference rejects stale newest matching sale", SaleReferenceRejectsStaleNewestMatchingSale),
       ("Sale reference skips invalid sale rows", SaleReferenceSkipsInvalidSaleRows),
+      ("Post pinch workflow starts with prepare before wait and set", PostPinchWorkflowStartsWithPrepareBeforeWaitAndSet),
+      ("Post pinch workflow ignores missing key press", PostPinchWorkflowIgnoresMissingKeyPress),
+      ("Post pinch workflow ignores busy task manager", PostPinchWorkflowIgnoresBusyTaskManager),
+      ("Post pinch workflow ignores disabled feature", PostPinchWorkflowIgnoresDisabledFeature),
+      ("Post pinch workflow ignores unavailable sell addon", PostPinchWorkflowIgnoresUnavailableSellAddon),
       ("Price request state remains active until current request finishes", PriceRequestStateRemainsActiveUntilCurrentRequestFinishes),
       ("Price request state ignores stale request finish", PriceRequestStateIgnoresStaleRequestFinish)
     };
@@ -237,6 +242,73 @@ internal static class Program
     AssertEqual(now, reference.LatestSaleAt, "latest valid sale");
   }
 
+  private static Task PostPinchWorkflowStartsWithPrepareBeforeWaitAndSet()
+  {
+    var actions = PostPinchWorkflow.PlanActions(
+      isFeatureEnabled: true,
+      isPostPinchKeyHeld: true,
+      isTaskManagerBusy: false,
+      isSellAddonReady: true);
+
+    AssertSequenceEqual(
+      [
+        PostPinchWorkflowAction.PreparePriceRequest,
+        PostPinchWorkflowAction.WaitForMarketPrice,
+        PostPinchWorkflowAction.SetNewPrice
+      ],
+      actions,
+      "post pinch start actions");
+    return Task.CompletedTask;
+  }
+
+  private static Task PostPinchWorkflowIgnoresMissingKeyPress()
+  {
+    var actions = PostPinchWorkflow.PlanActions(
+      isFeatureEnabled: true,
+      isPostPinchKeyHeld: false,
+      isTaskManagerBusy: false,
+      isSellAddonReady: true);
+
+    AssertSequenceEqual([], actions, "post pinch actions without key press");
+    return Task.CompletedTask;
+  }
+
+  private static Task PostPinchWorkflowIgnoresBusyTaskManager()
+  {
+    var actions = PostPinchWorkflow.PlanActions(
+      isFeatureEnabled: true,
+      isPostPinchKeyHeld: true,
+      isTaskManagerBusy: true,
+      isSellAddonReady: true);
+
+    AssertSequenceEqual([], actions, "post pinch actions with busy task manager");
+    return Task.CompletedTask;
+  }
+
+  private static Task PostPinchWorkflowIgnoresDisabledFeature()
+  {
+    var actions = PostPinchWorkflow.PlanActions(
+      isFeatureEnabled: false,
+      isPostPinchKeyHeld: true,
+      isTaskManagerBusy: false,
+      isSellAddonReady: true);
+
+    AssertSequenceEqual([], actions, "post pinch actions with disabled feature");
+    return Task.CompletedTask;
+  }
+
+  private static Task PostPinchWorkflowIgnoresUnavailableSellAddon()
+  {
+    var actions = PostPinchWorkflow.PlanActions(
+      isFeatureEnabled: true,
+      isPostPinchKeyHeld: true,
+      isTaskManagerBusy: false,
+      isSellAddonReady: false);
+
+    AssertSequenceEqual([], actions, "post pinch actions with unavailable sell addon");
+    return Task.CompletedTask;
+  }
+
   private static Task PriceRequestStateRemainsActiveUntilCurrentRequestFinishes()
   {
     var state = new MarketBoardPriceRequestState();
@@ -307,6 +379,18 @@ internal static class Program
   {
     if (!EqualityComparer<T>.Default.Equals(expected, actual))
       throw new InvalidOperationException($"{label}: expected {expected}, got {actual}");
+  }
+
+  private static void AssertSequenceEqual<T>(
+    IReadOnlyList<T> expected,
+    IReadOnlyList<T> actual,
+    string label)
+  {
+    if (!expected.SequenceEqual(actual))
+    {
+      throw new InvalidOperationException(
+        $"{label}: expected [{string.Join(", ", expected)}], got [{string.Join(", ", actual)}]");
+    }
   }
 }
 
