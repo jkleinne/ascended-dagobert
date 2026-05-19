@@ -13,6 +13,14 @@ internal static class Program
     {
       ("NQ average uses only NQ history rows", NqAverageUsesOnlyNqHistoryRows),
       ("HQ average uses only HQ history rows", HqAverageUsesOnlyHqHistoryRows),
+      ("No price reason explains bait guard skip", NoPriceReasonExplainsBaitGuardSkip),
+      ("No price reason explains thin market sales threshold", NoPriceReasonExplainsThinMarketSalesThreshold),
+      ("No price reason explains market board request failure", NoPriceReasonExplainsMarketBoardRequestFailure),
+      ("No price reason explains missing eligible listings", NoPriceReasonExplainsMissingEligibleListings),
+      ("No price reason explains duplicate response", NoPriceReasonExplainsDuplicateResponse),
+      ("No price reason falls back without debug detail", NoPriceReasonFallsBackWithoutDebugDetail),
+      ("Pricing debug includes context beyond no price reason", PricingDebugIncludesContextBeyondNoPriceReason),
+      ("Pricing debug formats sale age from fixed clock", PricingDebugFormatsSaleAgeFromFixedClock),
       ("Bait guard keeps listing-only target without sale reference", BaitGuardKeepsListingOnlyTargetWithoutSaleReference),
       ("Bait guard skips tiny cluster below sale median floor", BaitGuardSkipsTinyClusterBelowSaleMedianFloor),
       ("Bait guard accepts below-floor cluster with enough listings", BaitGuardAcceptsBelowFloorClusterWithEnoughListings),
@@ -100,6 +108,122 @@ internal static class Program
     AssertEqual((uint)2500, price.UnitPrice, "HQ average price");
     AssertEqual(2, price.RecentHistoryCount, "HQ recent history count");
     AssertEqual(DateTimeOffset.FromUnixTimeSeconds(newestHqSale), price.LatestSaleAt, "HQ latest sale");
+  }
+
+  private static Task NoPriceReasonExplainsBaitGuardSkip()
+  {
+    var reason = PricingMessageFormatter.FormatNoPriceReason(
+      new PricingDebugDetail(PricingDebugReason.NoCredibleListing)
+      {
+        ListingCount = 2
+      },
+      FixedPricingNow());
+
+    AssertEqual("bait guard found no credible listing", reason, "bait guard no price reason");
+    return Task.CompletedTask;
+  }
+
+  private static Task NoPriceReasonExplainsThinMarketSalesThreshold()
+  {
+    var reason = PricingMessageFormatter.FormatNoPriceReason(
+      new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
+      {
+        ThinMarketReason = ThinMarketPricingReason.NotEnoughRecentSales,
+        AveragePrice = new ThinMarketAveragePrice(5000, 1, FixedPricingNow().AddHours(-2)),
+        MinRecentSales = 3
+      },
+      FixedPricingNow());
+
+    AssertEqual(
+      "thin market skipped because Universalis returned 1 recent sale, minimum is 3",
+      reason,
+      "thin market no price reason");
+    return Task.CompletedTask;
+  }
+
+  private static Task NoPriceReasonExplainsMarketBoardRequestFailure()
+  {
+    var reason = PricingMessageFormatter.FormatNoPriceReason(
+      new PricingDebugDetail(PricingDebugReason.MarketBoardRequestFailed)
+      {
+        RequestStatus = "Failed"
+      },
+      FixedPricingNow());
+
+    AssertEqual("the market board request failed with status Failed", reason, "request failure reason");
+    return Task.CompletedTask;
+  }
+
+  private static Task NoPriceReasonExplainsMissingEligibleListings()
+  {
+    var reason = PricingMessageFormatter.FormatNoPriceReason(
+      new PricingDebugDetail(PricingDebugReason.NoEligibleListings)
+      {
+        ListingCount = 0
+      },
+      FixedPricingNow());
+
+    AssertEqual("no eligible market board listings were found", reason, "missing eligible listings reason");
+    return Task.CompletedTask;
+  }
+
+  private static Task NoPriceReasonExplainsDuplicateResponse()
+  {
+    var reason = PricingMessageFormatter.FormatNoPriceReason(
+      new PricingDebugDetail(PricingDebugReason.DuplicateMarketBoardRequest),
+      FixedPricingNow());
+
+    AssertEqual("a duplicate market board response was ignored", reason, "duplicate response reason");
+    return Task.CompletedTask;
+  }
+
+  private static Task NoPriceReasonFallsBackWithoutDebugDetail()
+  {
+    var reason = PricingMessageFormatter.FormatNoPriceReason(null, FixedPricingNow());
+
+    AssertEqual("pricing did not return a usable price", reason, "missing debug detail reason");
+    return Task.CompletedTask;
+  }
+
+  private static Task PricingDebugIncludesContextBeyondNoPriceReason()
+  {
+    var detail = new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
+    {
+      ThinMarketReason = ThinMarketPricingReason.NotEnoughRecentSales,
+      ListingCount = 2,
+      FloorPrice = 10000,
+      OwnLowestPrice = 12000,
+      AveragePrice = new ThinMarketAveragePrice(5000, 1, FixedPricingNow().AddHours(-2)),
+      MinRecentSales = 3,
+      MaxSaleAgeDays = 30,
+      TolerancePercent = 40.0f
+    };
+
+    var reason = PricingMessageFormatter.FormatNoPriceReason(detail, FixedPricingNow());
+    var debug = PricingMessageFormatter.FormatPricingDebug(detail, FixedPricingNow());
+
+    AssertNotEqual(reason, debug, "debug text differs from normal reason");
+    AssertContains("listings 2", debug, "debug listing count");
+    AssertContains($"floor {FormatExpectedGil(10000)} gil", debug, "debug floor price");
+    AssertContains($"own lowest {FormatExpectedGil(12000)} gil", debug, "debug own price");
+    AssertContains("newest sale 2 hours ago", debug, "debug sale age");
+    return Task.CompletedTask;
+  }
+
+  private static Task PricingDebugFormatsSaleAgeFromFixedClock()
+  {
+    var detail = new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
+    {
+      ThinMarketReason = ThinMarketPricingReason.LatestSaleTooOld,
+      AveragePrice = new ThinMarketAveragePrice(5000, 3, FixedPricingNow().AddDays(-31)),
+      MaxSaleAgeDays = 30
+    };
+
+    var debug = PricingMessageFormatter.FormatPricingDebug(detail, FixedPricingNow());
+
+    AssertContains("newest Universalis sale is 31 days ago", debug, "debug stale sale reason");
+    AssertContains("newest sale 31 days ago", debug, "debug stale sale context");
+    return Task.CompletedTask;
   }
 
   private static Task BaitGuardKeepsListingOnlyTargetWithoutSaleReference()
@@ -394,10 +518,32 @@ internal static class Program
     return new UniversalisAveragePriceProvider(httpClient, new TestPluginLog());
   }
 
+  private static DateTimeOffset FixedPricingNow()
+  {
+    return DateTimeOffset.FromUnixTimeSeconds(1778600000);
+  }
+
+  private static string FormatExpectedGil(int gil)
+  {
+    return gil.ToString("N0", System.Globalization.CultureInfo.CurrentCulture);
+  }
+
   private static void AssertEqual<T>(T expected, T actual, string label)
   {
     if (!EqualityComparer<T>.Default.Equals(expected, actual))
       throw new InvalidOperationException($"{label}: expected {expected}, got {actual}");
+  }
+
+  private static void AssertContains(string expectedSubstring, string actual, string label)
+  {
+    if (!actual.Contains(expectedSubstring, StringComparison.Ordinal))
+      throw new InvalidOperationException($"{label}: expected [{actual}] to contain [{expectedSubstring}]");
+  }
+
+  private static void AssertNotEqual<T>(T unexpected, T actual, string label)
+  {
+    if (EqualityComparer<T>.Default.Equals(unexpected, actual))
+      throw new InvalidOperationException($"{label}: did not expect {actual}");
   }
 
   private static void AssertSequenceEqual<T>(
