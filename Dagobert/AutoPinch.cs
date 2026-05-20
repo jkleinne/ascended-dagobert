@@ -34,13 +34,17 @@ namespace Dagobert
     private bool _skipCurrentItem = false;
     private bool _loggedMarketPriceWait;
     private readonly TaskManager _taskManager;
+    private readonly AutoRetainerSuppressionCoordinator _autoRetainerSuppressionCoordinator;
+    private readonly AutoPinchTaskGuard _autoPinchTaskGuard;
+    private bool _hasTalkAddonListeners;
     private Dictionary<string, int?> _cachedPrices = [];
     private const uint ComparePricesButtonId = 4;
 
     public AutoPinch(
       IAverageSalePriceProvider averagePriceProvider,
       IRecentSaleReferenceProvider saleReferenceProvider,
-      MarketBoardRequestTracker marketBoardRequestTracker)
+      MarketBoardRequestTracker marketBoardRequestTracker,
+      AutoRetainerSuppressionCoordinator autoRetainerSuppressionCoordinator)
       : base("Ascended Dagobert", ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.AlwaysUseWindowPadding | ImGuiWindowFlags.AlwaysAutoResize, true)
     {
       _mbHandler = new MarketBoardHandler(
@@ -65,6 +69,12 @@ namespace Dagobert
         TimeLimitMS = 10000,
         AbortOnTimeout = true
       };
+      _autoRetainerSuppressionCoordinator = autoRetainerSuppressionCoordinator;
+      _autoPinchTaskGuard = new AutoPinchTaskGuard(
+        autoRetainerSuppressionCoordinator,
+        () => _taskManager.Abort(),
+        RemoveTalkAddonListeners,
+        LogAutoPinchTaskException);
       // Fails on non-windows
       try
       {
@@ -84,6 +94,9 @@ namespace Dagobert
 
     public void Dispose()
     {
+      ExecuteCleanupActions(AutoPinchCleanupPlan.PlanDisposeActions(
+        _autoRetainerSuppressionCoordinator.HasActiveSession,
+        _hasTalkAddonListeners));
       Svc.AddonLifecycle.UnregisterListener(AddonEvent.PostSetup, "RetainerSell", RetainerSellPostSetup);
       _mbHandler.NewPriceReceived -= MBHandler_NewPriceReceived;
       _mbHandler.Dispose();
@@ -98,13 +111,13 @@ namespace Dagobert
       }
       catch (Exception ex)
       {
-        _taskManager.Abort();
-        Svc.Log.Error(ex, "Error while auto pinching");
-        if (Plugin.Configuration.ShowErrorsInChat)
-          Svc.Chat.PrintError($"Error while auto pinching: {ex.Message}");
-
-        RemoveTalkAddonListeners();
+        ExecuteCleanupActions(AutoPinchCleanupPlan.PlanDrawCatchActions(_autoRetainerSuppressionCoordinator.HasActiveSession), ex);
       }
+
+      ExecuteCleanupActions(AutoPinchCleanupPlan.PlanIdleActions(
+        _autoRetainerSuppressionCoordinator.HasActiveSession,
+        _hasTalkAddonListeners,
+        _taskManager.IsBusy));
     }
 
     private void DrawForRetainerList()
@@ -188,8 +201,7 @@ namespace Dagobert
       {
         if (ImGui.Button("Cancel"))
         {
-          _taskManager.Abort();
-          RemoveTalkAddonListeners();
+          ExecuteCleanupActions(AutoPinchCleanupPlan.PlanCancelActions(_autoRetainerSuppressionCoordinator.HasActiveSession));
         }
         if (ImGui.IsItemHovered())
         {
@@ -220,57 +232,52 @@ namespace Dagobert
       ClearState();
       if (GenericHelpers.TryGetAddonByName<AtkUnitBase>("RetainerList", out var addon) && GenericHelpers.IsAddonReady(addon))
       {
-        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, "Talk", SkipRetainerDialog);
-        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostUpdate, "Talk", SkipRetainerDialog);
-
         // we cache the number of retainers because AddonMaster will be disposed once the RetainerList addon is closed.
         var retainerList = new AddonMaster.RetainerList(addon);
         var retainers = retainerList.Retainers;
-        var num = retainers.Length;
         
-        // Check if all are disabled (sentinel present)
-        bool allDisabled = Plugin.Configuration.EnabledRetainerNames.Contains(Configuration.ALL_DISABLED_SENTINEL);
-        
-        // If all are disabled, skip all retainers and notify user
-        if (allDisabled)
+        var retainerNames = retainers.Select(retainer => retainer.Name).ToArray();
+        var retainerIndexes = AutoPinchRunPlanner.SelectRetainerIndexes(
+          retainerNames,
+          Plugin.Configuration.EnabledRetainerNames,
+          Configuration.ALL_DISABLED_SENTINEL);
+
+        if (retainerIndexes.Count == 0 && Plugin.Configuration.EnabledRetainerNames.Contains(Configuration.ALL_DISABLED_SENTINEL))
         {
           Communicator.PrintAllRetainersDisabled();
           return;
         }
-        
-        // If no retainers are explicitly enabled, enable all by default
-        bool allEnabled = Plugin.Configuration.EnabledRetainerNames.Count == 0;
-        
-        for (int i = 0; i < num; i++)
+
+        if (retainerIndexes.Count == 0)
+          return;
+
+        RegisterTalkAddonListeners();
+        _autoRetainerSuppressionCoordinator.BeginRun();
+
+        foreach (var retainerIndex in retainerIndexes)
         {
-          var retainerName = retainers[i].Name;
-          
-          // Skip retainers that are excluded in configuration
-          if (!allEnabled && !Plugin.Configuration.EnabledRetainerNames.Contains(retainerName))
-          {
-            Svc.Log.Debug($"Skipping retainer '{retainerName}' (excluded by user configuration)");
-            continue;
-          }
-          EnqueueSingleRetainer(i);
+          EnqueueSingleRetainer(retainerIndex);
         }
 
-        _taskManager.Enqueue(RemoveTalkAddonListeners);
+        EnqueueAutoPinchAction(RemoveTalkAddonListeners, nameof(RemoveTalkAddonListeners));
         if (Plugin.Configuration.TTSWhenAllDone)
-          _taskManager.Enqueue(() => SpeakTTS(Plugin.Configuration.TTSWhenAllDoneMsg), "SpeakTTSAll");
+          EnqueueAutoPinchTask(() => SpeakTTS(Plugin.Configuration.TTSWhenAllDoneMsg), "SpeakTTSAll");
       }
     }
 
     private void EnqueueSingleRetainer(int index)
     {
-      _taskManager.Enqueue(() => ClickRetainer(index), $"ClickRetainer{index}");
+      EnqueueAutoPinchTask(() => ClickRetainer(index), $"ClickRetainer{index}");
       _taskManager.DelayNext(100);
-      _taskManager.Enqueue(ClickSellItems, $"ClickSellItems{index}");
+      EnqueueAutoPinchTask(ClickSellItems, $"ClickSellItems{index}");
       _taskManager.DelayNext(500);
-      _taskManager.Enqueue(() => EnqueueAllRetainerItems(InsertSingleItem, true), $"EnqueueAllRetainerItems{index}");
+      EnqueueAutoPinchTask(
+        () => AutoPinchRunPlanner.ShouldCompleteSelectedRetainerTask(EnqueueAllRetainerItems(InsertSingleItem, true)),
+        $"EnqueueAllRetainerItems{index}");
       _taskManager.DelayNext(500);
-      _taskManager.Enqueue(CloseRetainerSellList, $"CloseRetainerSellList{index}");
+      EnqueueAutoPinchTask(CloseRetainerSellList, $"CloseRetainerSellList{index}");
       _taskManager.DelayNext(100);
-      _taskManager.Enqueue(CloseRetainer, $"CloseRetainer{index}");
+      EnqueueAutoPinchTask(CloseRetainer, $"CloseRetainer{index}");
       _taskManager.DelayNext(100);
     }
 
@@ -326,16 +333,26 @@ namespace Dagobert
         return;
 
       ClearState();
-      EnqueueAllRetainerItems(EnqueueSingleItem, false);
+      var sellListWorkState = EnqueueAllRetainerItems(EnqueueSingleItem, false);
+      if (!AutoPinchRunPlanner.ShouldStartCurrentRetainerRun(sellListWorkState))
+        return;
+
+      _autoRetainerSuppressionCoordinator.BeginRun();
     }
 
-    private unsafe bool? EnqueueAllRetainerItems(Action<int> enqueueFunc, bool reverseOrder)
+    private unsafe AutoPinchSellListWorkState EnqueueAllRetainerItems(Action<int> enqueueFunc, bool reverseOrder)
     {
       if (GenericHelpers.TryGetAddonByName<AtkUnitBase>("RetainerSellList", out var addon) && GenericHelpers.IsAddonReady(addon))
       {
         var listNode = (AtkComponentNode*)addon->UldManager.NodeList[10];
         var listComponent = (AtkComponentList*)listNode->Component;
         int num = listComponent->ListLength;
+        var sellListWorkState = AutoPinchRunPlanner.GetSellListWorkState(
+          isSellListAvailable: true,
+          itemCount: num);
+        if (sellListWorkState != AutoPinchSellListWorkState.HasItems)
+          return sellListWorkState;
+
         if (reverseOrder)
         {
           for (int i = num - 1; i >= 0; i--)
@@ -351,39 +368,39 @@ namespace Dagobert
           }
         }
         if (Plugin.Configuration.TTSWhenEachDone)
-          _taskManager.Enqueue(() => SpeakTTS(Plugin.Configuration.TTSWhenEachDoneMsg), "SpeakTTSEach");
+          EnqueueAutoPinchTask(() => SpeakTTS(Plugin.Configuration.TTSWhenEachDoneMsg), "SpeakTTSEach");
 
-        return true;
+        return sellListWorkState;
       }
       else
-        return false;
+        return AutoPinchSellListWorkState.Unavailable;
     }
 
     private void EnqueueSingleItem(int index)
     {
-      _taskManager.Enqueue(() => OpenItemContextMenu(index), $"OpenItemContextMenu{index}");
+      EnqueueAutoPinchTask(() => OpenItemContextMenu(index), $"OpenItemContextMenu{index}");
       _taskManager.DelayNext(100);
-      _taskManager.Enqueue(ClickAdjustPrice, $"ClickAdjustPrice{index}");
+      EnqueueAutoPinchTask(ClickAdjustPrice, $"ClickAdjustPrice{index}");
       _taskManager.DelayNext(100);
-      _taskManager.Enqueue(DelayMarketBoard, $"DelayMB{index}");
-      _taskManager.Enqueue(ClickComparePrice, $"ClickComparePrice{index}");
+      EnqueueAutoPinchTask(DelayMarketBoard, $"DelayMB{index}");
+      EnqueueAutoPinchTask(ClickComparePrice, $"ClickComparePrice{index}");
       _taskManager.DelayNext(Plugin.Configuration.MarketBoardKeepOpenMS);
-      _taskManager.Enqueue(WaitForMarketPrice, $"WaitForMarketPrice{index}");
-      _taskManager.Enqueue(SetNewPrice, $"SetNewPrice{index}");
+      EnqueueAutoPinchTask(WaitForMarketPrice, $"WaitForMarketPrice{index}");
+      EnqueueAutoPinchTask(SetNewPrice, $"SetNewPrice{index}");
     }
 
     private void InsertSingleItem(int index)
     {
       // reverse order because we INSERT
-      _taskManager.Insert(SetNewPrice, $"SetNewPrice{index}");
-      _taskManager.Insert(WaitForMarketPrice, $"WaitForMarketPrice{index}");
+      InsertAutoPinchTask(SetNewPrice, $"SetNewPrice{index}");
+      InsertAutoPinchTask(WaitForMarketPrice, $"WaitForMarketPrice{index}");
       _taskManager.InsertDelayNext(Plugin.Configuration.MarketBoardKeepOpenMS);
-      _taskManager.Insert(ClickComparePrice, $"ClickComparePrice{index}");
-      _taskManager.Insert(DelayMarketBoard, $"DelayMB{index}");
+      InsertAutoPinchTask(ClickComparePrice, $"ClickComparePrice{index}");
+      InsertAutoPinchTask(DelayMarketBoard, $"DelayMB{index}");
       _taskManager.InsertDelayNext(100);
-      _taskManager.Insert(ClickAdjustPrice, $"ClickAdjustPrice{index}");
+      InsertAutoPinchTask(ClickAdjustPrice, $"ClickAdjustPrice{index}");
       _taskManager.InsertDelayNext(100);
-      _taskManager.Insert(() => OpenItemContextMenu(index), $"OpenItemContextMenu{index}");
+      InsertAutoPinchTask(() => OpenItemContextMenu(index), $"OpenItemContextMenu{index}");
     }
 
     private static unsafe bool? OpenItemContextMenu(int itemIndex)
@@ -656,6 +673,67 @@ namespace Dagobert
       }
     }
 
+    private void EnqueueAutoPinchTask(Func<bool?> task, string taskName)
+    {
+      _taskManager.Enqueue(() => _autoPinchTaskGuard.Run(task, taskName), taskName);
+    }
+
+    private void EnqueueAutoPinchAction(Action action, string taskName)
+    {
+      EnqueueAutoPinchTask(() =>
+      {
+        action();
+        return true;
+      }, taskName);
+    }
+
+    private void InsertAutoPinchTask(Func<bool?> task, string taskName)
+    {
+      _taskManager.Insert(() => _autoPinchTaskGuard.Run(task, taskName), taskName);
+    }
+
+    private void ExecuteCleanupActions(
+      IReadOnlyList<AutoPinchCleanupAction> actions,
+      Exception? exception = null)
+    {
+      foreach (var action in actions)
+        ExecuteCleanupAction(action, exception);
+    }
+
+    private void ExecuteCleanupAction(AutoPinchCleanupAction action, Exception? exception)
+    {
+      switch (action)
+      {
+        case AutoPinchCleanupAction.AbortTasks:
+          _taskManager.Abort();
+          break;
+        case AutoPinchCleanupAction.EndSuppression:
+          _autoRetainerSuppressionCoordinator.EndRun();
+          break;
+        case AutoPinchCleanupAction.LogException:
+          if (exception is not null)
+            LogAutoPinchException(exception);
+          break;
+        case AutoPinchCleanupAction.RemoveTalkListeners:
+          RemoveTalkAddonListeners();
+          break;
+        default:
+          throw new ArgumentOutOfRangeException(nameof(action), action, null);
+      }
+    }
+
+    private static void LogAutoPinchTaskException(Exception exception, string taskName)
+    {
+      Svc.Log.Error(exception, "Auto pinch task {TaskName} failed", taskName);
+    }
+
+    private static void LogAutoPinchException(Exception exception)
+    {
+      Svc.Log.Error(exception, "Error while auto pinching");
+      if (Plugin.Configuration.ShowErrorsInChat)
+        Svc.Chat.PrintError($"Error while auto pinching: {exception.Message}");
+    }
+
     private bool? WaitForMarketPrice()
     {
       if (_skipCurrentItem)
@@ -687,6 +765,14 @@ namespace Dagobert
     {
       Svc.AddonLifecycle.UnregisterListener(AddonEvent.PostSetup, "Talk", SkipRetainerDialog);
       Svc.AddonLifecycle.UnregisterListener(AddonEvent.PostUpdate, "Talk", SkipRetainerDialog);
+      _hasTalkAddonListeners = false;
+    }
+
+    private void RegisterTalkAddonListeners()
+    {
+      Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, "Talk", SkipRetainerDialog);
+      Svc.AddonLifecycle.RegisterListener(AddonEvent.PostUpdate, "Talk", SkipRetainerDialog);
+      _hasTalkAddonListeners = true;
     }
 
     private static unsafe Vector2 GetNodePosition(AtkResNode* node)

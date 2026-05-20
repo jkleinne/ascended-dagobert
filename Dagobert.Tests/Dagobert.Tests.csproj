@@ -8,6 +8,11 @@
 
   <ItemGroup>
     <Compile Include="../Dagobert/BaitGuard.cs" Link="Production/BaitGuard.cs" />
+    <Compile Include="../Dagobert/AutoPinchTaskGuard.cs" Link="Production/AutoPinchTaskGuard.cs" />
+    <Compile Include="../Dagobert/AutoPinchRunPlanner.cs" Link="Production/AutoPinchRunPlanner.cs" />
+    <Compile Include="../Dagobert/AutoPinchCleanupPlan.cs" Link="Production/AutoPinchCleanupPlan.cs" />
+    <Compile Include="../Dagobert/AutoRetainerSuppression.cs" Link="Production/AutoRetainerSuppression.cs" />
+    <Compile Include="../Dagobert/AutoRetainerIpcState.cs" Link="Production/AutoRetainerIpcState.cs" />
     <Compile Include="../Dagobert/MarketBoardPriceRequestState.cs" Link="Production/MarketBoardPriceRequestState.cs" />
     <Compile Include="../Dagobert/PostPinchWorkflow.cs" Link="Production/PostPinchWorkflow.cs" />
     <Compile Include="../Dagobert/PricingDebugDetail.cs" Link="Production/PricingDebugDetail.cs" />

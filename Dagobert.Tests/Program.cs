@@ -7,6 +7,8 @@ namespace Dagobert.Tests;
 
 internal static class Program
 {
+  private const string TestAllDisabledSentinel = "__ALL_DISABLED__";
+
   public static async Task<int> Main()
   {
     var tests = new (string Name, Func<Task> Run)[]
@@ -39,6 +41,34 @@ internal static class Program
       ("Post pinch workflow ignores busy task manager", PostPinchWorkflowIgnoresBusyTaskManager),
       ("Post pinch workflow ignores disabled feature", PostPinchWorkflowIgnoresDisabledFeature),
       ("Post pinch workflow ignores unavailable sell addon", PostPinchWorkflowIgnoresUnavailableSellAddon),
+      ("AutoRetainer suppression restores unsuppressed state", AutoRetainerSuppressionRestoresUnsuppressedState),
+      ("AutoRetainer suppression restores already suppressed state", AutoRetainerSuppressionRestoresAlreadySuppressedState),
+      ("AutoRetainer suppression skips inactive gateway", AutoRetainerSuppressionSkipsInactiveGateway),
+      ("AutoRetainer suppression skips failed suppression write", AutoRetainerSuppressionSkipsFailedSuppressionWrite),
+      ("AutoRetainer suppression cleanup is idempotent", AutoRetainerSuppressionCleanupIsIdempotent),
+      ("AutoRetainer suppression retries failed restore", AutoRetainerSuppressionRetriesFailedRestore),
+      ("AutoRetainer suppression idle cleanup waits for idle", AutoRetainerSuppressionIdleCleanupWaitsForIdle),
+      ("AutoPinch task guard leaves active session after successful task", AutoPinchTaskGuardLeavesActiveSessionAfterSuccessfulTask),
+      ("AutoPinch task guard restores suppression on task exception", AutoPinchTaskGuardRestoresSuppressionOnTaskException),
+      ("AutoPinch task guard preserves original exception when abort fails", AutoPinchTaskGuardPreservesOriginalExceptionWhenAbortFails),
+      ("AutoPinch task guard continues cleanup after failed suppression restore", AutoPinchTaskGuardContinuesCleanupAfterFailedSuppressionRestore),
+      ("AutoPinch task guard ignores inactive suppression end", AutoPinchTaskGuardIgnoresInactiveSuppressionEnd),
+      ("AutoPinch task guard records listener cleanup and log failures", AutoPinchTaskGuardRecordsListenerCleanupAndLogFailures),
+      ("AutoPinch run planner selects all retainers when none configured", AutoPinchRunPlannerSelectsAllRetainersWhenNoneConfigured),
+      ("AutoPinch run planner skips all retainers with sentinel", AutoPinchRunPlannerSkipsAllRetainersWithSentinel),
+      ("AutoPinch run planner selects configured retainers in visible order", AutoPinchRunPlannerSelectsConfiguredRetainersInVisibleOrder),
+      ("AutoPinch run planner returns no retainers when configured names are missing", AutoPinchRunPlannerReturnsNoRetainersWhenConfiguredNamesAreMissing),
+      ("AutoPinch run planner detects sell list work", AutoPinchRunPlannerDetectsSellListWork),
+      ("AutoPinch run planner treats empty sell list differently by entry point", AutoPinchRunPlannerTreatsEmptySellListDifferentlyByEntryPoint),
+      ("AutoRetainer IPC state skips missing plugin read", AutoRetainerIpcStateSkipsMissingPluginRead),
+      ("AutoRetainer IPC state skips missing plugin write", AutoRetainerIpcStateSkipsMissingPluginWrite),
+      ("AutoRetainer IPC state reports read failure", AutoRetainerIpcStateReportsReadFailure),
+      ("AutoRetainer IPC state reports write failure", AutoRetainerIpcStateReportsWriteFailure),
+      ("AutoRetainer IPC state reports successful calls", AutoRetainerIpcStateReportsSuccessfulCalls),
+      ("AutoPinch cleanup plan cancels active run", AutoPinchCleanupPlanCancelsActiveRun),
+      ("AutoPinch cleanup plan handles draw catch", AutoPinchCleanupPlanHandlesDrawCatch),
+      ("AutoPinch cleanup plan disposes active run", AutoPinchCleanupPlanDisposesActiveRun),
+      ("AutoPinch cleanup plan waits for idle", AutoPinchCleanupPlanWaitsForIdle),
       ("Price request state remains active until current request finishes", PriceRequestStateRemainsActiveUntilCurrentRequestFinishes),
       ("Price request state ignores stale request finish", PriceRequestStateIgnoresStaleRequestFinish)
     };
@@ -607,6 +637,536 @@ internal static class Program
     return Task.CompletedTask;
   }
 
+  private static Task AutoRetainerSuppressionRestoresUnsuppressedState()
+  {
+    var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false);
+    var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
+
+    coordinator.BeginRun();
+
+    AssertEqual(true, coordinator.HasActiveSession, "active session after begin");
+    AssertSequenceEqual([true], gateway.SetValues, "set values after begin");
+
+    coordinator.EndRun();
+
+    AssertEqual(false, coordinator.HasActiveSession, "active session after end");
+    AssertSequenceEqual([true, false], gateway.SetValues, "set values after restore");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoRetainerSuppressionRestoresAlreadySuppressedState()
+  {
+    var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: true);
+    var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
+
+    coordinator.BeginRun();
+    coordinator.EndRun();
+
+    AssertSequenceEqual([true, true], gateway.SetValues, "set values after restore");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoRetainerSuppressionSkipsInactiveGateway()
+  {
+    var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false)
+    {
+      CanGet = false
+    };
+    var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
+
+    coordinator.BeginRun();
+    coordinator.EndRun();
+
+    AssertEqual(false, coordinator.HasActiveSession, "active session after failed begin");
+    AssertSequenceEqual([], gateway.SetValues, "set values when gateway cannot read");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoRetainerSuppressionSkipsFailedSuppressionWrite()
+  {
+    var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false);
+    gateway.SetResults.Enqueue(false);
+    var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
+
+    coordinator.BeginRun();
+
+    AssertEqual(false, coordinator.HasActiveSession, "active session after failed suppression write");
+    AssertSequenceEqual([], gateway.SetValues, "set values after failed suppression write");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoRetainerSuppressionCleanupIsIdempotent()
+  {
+    var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false);
+    var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
+
+    coordinator.BeginRun();
+    coordinator.EndRun();
+    coordinator.EndRun();
+
+    AssertSequenceEqual([true, false], gateway.SetValues, "set values after duplicate cleanup");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoRetainerSuppressionRetriesFailedRestore()
+  {
+    var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false);
+    gateway.SetResults.Enqueue(true);
+    gateway.SetResults.Enqueue(false);
+    gateway.SetResults.Enqueue(true);
+    var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
+
+    coordinator.BeginRun();
+    var restoredFirst = coordinator.EndRun();
+    var restoredSecond = coordinator.EndRun();
+
+    AssertEqual(false, restoredFirst, "first restore attempt");
+    AssertEqual(true, restoredSecond, "second restore attempt");
+    AssertEqual(false, coordinator.HasActiveSession, "active session after restore retry");
+    AssertSequenceEqual([true, false], gateway.SetValues, "set values after restore retry");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoRetainerSuppressionIdleCleanupWaitsForIdle()
+  {
+    var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false);
+    var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
+
+    coordinator.BeginRun();
+    var endedWhileBusy = coordinator.EndRunIfIdle(isTaskManagerBusy: true);
+    var endedWhenIdle = coordinator.EndRunIfIdle(isTaskManagerBusy: false);
+
+    AssertEqual(false, endedWhileBusy, "idle cleanup while busy");
+    AssertEqual(true, endedWhenIdle, "idle cleanup when idle");
+    AssertSequenceEqual([true, false], gateway.SetValues, "set values after idle cleanup");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchTaskGuardLeavesActiveSessionAfterSuccessfulTask()
+  {
+    var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false);
+    var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
+    var guard = new AutoPinchTaskGuard(
+      coordinator,
+      abortTasks: () => throw new InvalidOperationException("abort should not run"),
+      removeTalkAddonListeners: () => throw new InvalidOperationException("listener cleanup should not run"),
+      logException: (_, _) => throw new InvalidOperationException("log should not run"));
+
+    coordinator.BeginRun();
+
+    var result = guard.Run(() => true, "SuccessfulTask");
+
+    AssertEqual<bool?>(true, result, "guarded result");
+    AssertEqual(true, coordinator.HasActiveSession, "active session after successful task");
+    AssertSequenceEqual([true], gateway.SetValues, "set values after successful task");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchTaskGuardRestoresSuppressionOnTaskException()
+  {
+    var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false);
+    var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
+    var abortCount = 0;
+    var listenerCleanupCount = 0;
+    Exception? loggedException = null;
+    string? loggedTaskName = null;
+    var expectedException = new InvalidOperationException("task failed");
+    var guard = new AutoPinchTaskGuard(
+      coordinator,
+      abortTasks: () => abortCount++,
+      removeTalkAddonListeners: () => listenerCleanupCount++,
+      logException: (exception, taskName) =>
+      {
+        loggedException = exception;
+        loggedTaskName = taskName;
+      });
+
+    coordinator.BeginRun();
+
+    try
+    {
+      guard.Run(() => throw expectedException, "FailingTask");
+      throw new InvalidOperationException("expected guarded task to throw");
+    }
+    catch (InvalidOperationException ex) when (ReferenceEquals(ex, expectedException))
+    {
+    }
+
+    AssertEqual(false, coordinator.HasActiveSession, "active session after exception");
+    AssertSequenceEqual([true, false], gateway.SetValues, "set values after exception");
+    AssertEqual(1, abortCount, "abort count");
+    AssertEqual(1, listenerCleanupCount, "listener cleanup count");
+    AssertEqual(expectedException, loggedException, "logged exception");
+    AssertEqual("FailingTask", loggedTaskName, "logged task name");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchTaskGuardPreservesOriginalExceptionWhenAbortFails()
+  {
+    var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false);
+    var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
+    var listenerCleanupCount = 0;
+    Exception? loggedException = null;
+    string? loggedTaskName = null;
+    var expectedException = new InvalidOperationException("task failed");
+    var abortException = new InvalidOperationException("abort failed");
+    var guard = new AutoPinchTaskGuard(
+      coordinator,
+      abortTasks: () => throw abortException,
+      removeTalkAddonListeners: () => listenerCleanupCount++,
+      logException: (exception, taskName) =>
+      {
+        loggedException = exception;
+        loggedTaskName = taskName;
+      });
+
+    coordinator.BeginRun();
+
+    try
+    {
+      guard.Run(() => throw expectedException, "FailingAbortTask");
+      throw new InvalidOperationException("expected guarded task to throw");
+    }
+    catch (InvalidOperationException ex) when (ReferenceEquals(ex, expectedException))
+    {
+    }
+
+    AssertEqual(false, coordinator.HasActiveSession, "active session after abort failure");
+    AssertSequenceEqual([true, false], gateway.SetValues, "set values after abort failure");
+    AssertEqual(1, listenerCleanupCount, "listener cleanup count");
+    AssertEqual(expectedException, loggedException, "logged exception");
+    AssertEqual("FailingAbortTask", loggedTaskName, "logged task name");
+    AssertEqual(abortException, expectedException.Data[AutoPinchTaskGuard.AbortFailureDataKey], "recorded abort failure");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchTaskGuardContinuesCleanupAfterFailedSuppressionRestore()
+  {
+    var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false);
+    gateway.SetResults.Enqueue(true);
+    gateway.SetResults.Enqueue(false);
+    var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
+    var abortCount = 0;
+    var listenerCleanupCount = 0;
+    Exception? loggedException = null;
+    var expectedException = new InvalidOperationException("task failed");
+    var guard = new AutoPinchTaskGuard(
+      coordinator,
+      abortTasks: () => abortCount++,
+      removeTalkAddonListeners: () => listenerCleanupCount++,
+      logException: (exception, _) => loggedException = exception);
+
+    coordinator.BeginRun();
+
+    try
+    {
+      guard.Run(() => throw expectedException, "FailedRestoreTask");
+      throw new InvalidOperationException("expected guarded task to throw");
+    }
+    catch (InvalidOperationException ex) when (ReferenceEquals(ex, expectedException))
+    {
+    }
+
+    AssertEqual(true, coordinator.HasActiveSession, "active session after failed restore");
+    AssertSequenceEqual([true], gateway.SetValues, "set values after failed restore");
+    AssertEqual(1, abortCount, "abort count");
+    AssertEqual(1, listenerCleanupCount, "listener cleanup count");
+    AssertEqual(expectedException, loggedException, "logged exception");
+    AssertEqual(true, expectedException.Data[AutoPinchTaskGuard.SuppressionFailureDataKey], "recorded suppression failure");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchTaskGuardIgnoresInactiveSuppressionEnd()
+  {
+    var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false);
+    var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
+    var expectedException = new InvalidOperationException("task failed");
+    var guard = new AutoPinchTaskGuard(
+      coordinator,
+      abortTasks: () => { },
+      removeTalkAddonListeners: () => { },
+      logException: (_, _) => { });
+
+    try
+    {
+      guard.Run(() => throw expectedException, "InactiveSuppressionTask");
+      throw new InvalidOperationException("expected guarded task to throw");
+    }
+    catch (InvalidOperationException ex) when (ReferenceEquals(ex, expectedException))
+    {
+    }
+
+    AssertEqual(false, expectedException.Data.Contains(AutoPinchTaskGuard.SuppressionFailureDataKey), "suppression failure record");
+    AssertSequenceEqual([], gateway.SetValues, "set values without active session");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchTaskGuardRecordsListenerCleanupAndLogFailures()
+  {
+    var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false);
+    var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
+    var expectedException = new InvalidOperationException("task failed");
+    var listenerException = new InvalidOperationException("listener cleanup failed");
+    var logException = new InvalidOperationException("log failed");
+    var guard = new AutoPinchTaskGuard(
+      coordinator,
+      abortTasks: () => { },
+      removeTalkAddonListeners: () => throw listenerException,
+      logException: (_, _) => throw logException);
+
+    coordinator.BeginRun();
+
+    try
+    {
+      guard.Run(() => throw expectedException, "CleanupFailureTask");
+      throw new InvalidOperationException("expected guarded task to throw");
+    }
+    catch (InvalidOperationException ex) when (ReferenceEquals(ex, expectedException))
+    {
+    }
+
+    AssertEqual(listenerException, expectedException.Data[AutoPinchTaskGuard.ListenerCleanupFailureDataKey], "recorded listener cleanup failure");
+    AssertEqual(logException, expectedException.Data[AutoPinchTaskGuard.LogFailureDataKey], "recorded log failure");
+    AssertSequenceEqual([true, false], gateway.SetValues, "set values after cleanup failures");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchRunPlannerSelectsAllRetainersWhenNoneConfigured()
+  {
+    var indexes = AutoPinchRunPlanner.SelectRetainerIndexes(
+      ["Alpha", "Beta"],
+      new HashSet<string>(),
+      TestAllDisabledSentinel);
+
+    AssertSequenceEqual([0, 1], indexes, "selected retainer indexes");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchRunPlannerSkipsAllRetainersWithSentinel()
+  {
+    var indexes = AutoPinchRunPlanner.SelectRetainerIndexes(
+      ["Alpha", "Beta"],
+      new HashSet<string> { TestAllDisabledSentinel },
+      TestAllDisabledSentinel);
+
+    AssertSequenceEqual([], indexes, "selected retainer indexes");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchRunPlannerSelectsConfiguredRetainersInVisibleOrder()
+  {
+    var indexes = AutoPinchRunPlanner.SelectRetainerIndexes(
+      ["Alpha", "Beta", "Gamma"],
+      new HashSet<string> { "Gamma", "Beta" },
+      TestAllDisabledSentinel);
+
+    AssertSequenceEqual([1, 2], indexes, "selected retainer indexes");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchRunPlannerReturnsNoRetainersWhenConfiguredNamesAreMissing()
+  {
+    var indexes = AutoPinchRunPlanner.SelectRetainerIndexes(
+      ["Alpha", "Beta"],
+      new HashSet<string> { "Gamma" },
+      TestAllDisabledSentinel);
+
+    AssertSequenceEqual([], indexes, "selected retainer indexes");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchRunPlannerDetectsSellListWork()
+  {
+    AssertEqual(false, AutoPinchRunPlanner.HasSellListItems(0), "empty sell list");
+    AssertEqual(true, AutoPinchRunPlanner.HasSellListItems(1), "non empty sell list");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchRunPlannerTreatsEmptySellListDifferentlyByEntryPoint()
+  {
+    var unavailable = AutoPinchRunPlanner.GetSellListWorkState(
+      isSellListAvailable: false,
+      itemCount: 0);
+    var empty = AutoPinchRunPlanner.GetSellListWorkState(
+      isSellListAvailable: true,
+      itemCount: 0);
+    var hasItems = AutoPinchRunPlanner.GetSellListWorkState(
+      isSellListAvailable: true,
+      itemCount: 1);
+
+    AssertEqual(false, AutoPinchRunPlanner.ShouldStartCurrentRetainerRun(unavailable), "unavailable current retainer start");
+    AssertEqual(false, AutoPinchRunPlanner.ShouldStartCurrentRetainerRun(empty), "empty current retainer start");
+    AssertEqual(true, AutoPinchRunPlanner.ShouldStartCurrentRetainerRun(hasItems), "non empty current retainer start");
+    AssertEqual(false, AutoPinchRunPlanner.ShouldCompleteSelectedRetainerTask(unavailable), "unavailable selected retainer task");
+    AssertEqual(true, AutoPinchRunPlanner.ShouldCompleteSelectedRetainerTask(empty), "empty selected retainer task");
+    AssertEqual(true, AutoPinchRunPlanner.ShouldCompleteSelectedRetainerTask(hasItems), "non empty selected retainer task");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoRetainerIpcStateSkipsMissingPluginRead()
+  {
+    var state = new AutoRetainerIpcState(IsAutoRetainerLoaded: false);
+
+    var result = state.TryReadSuppressed(
+      readSuppressed: () => throw new InvalidOperationException("read should not run"),
+      logWarning: _ => throw new InvalidOperationException("warning should not run"),
+      out var isSuppressed);
+
+    AssertEqual(false, result, "read result");
+    AssertEqual(false, isSuppressed, "read suppressed fallback");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoRetainerIpcStateSkipsMissingPluginWrite()
+  {
+    var state = new AutoRetainerIpcState(IsAutoRetainerLoaded: false);
+
+    var result = state.TryWriteSuppressed(
+      isSuppressed: true,
+      writeSuppressed: _ => throw new InvalidOperationException("write should not run"),
+      logWarning: _ => throw new InvalidOperationException("warning should not run"));
+
+    AssertEqual(false, result, "write result");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoRetainerIpcStateReportsReadFailure()
+  {
+    var state = new AutoRetainerIpcState(IsAutoRetainerLoaded: true);
+    var warnings = new List<Exception>();
+    var expectedException = new InvalidOperationException("read failed");
+
+    var result = state.TryReadSuppressed(
+      readSuppressed: () => throw expectedException,
+      logWarning: warnings.Add,
+      out var isSuppressed);
+
+    AssertEqual(false, result, "read result");
+    AssertEqual(false, isSuppressed, "read suppressed fallback");
+    AssertSequenceEqual([expectedException], warnings, "warnings");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoRetainerIpcStateReportsWriteFailure()
+  {
+    var state = new AutoRetainerIpcState(IsAutoRetainerLoaded: true);
+    var warnings = new List<Exception>();
+    var expectedException = new InvalidOperationException("write failed");
+
+    var result = state.TryWriteSuppressed(
+      isSuppressed: true,
+      writeSuppressed: _ => throw expectedException,
+      logWarning: warnings.Add);
+
+    AssertEqual(false, result, "write result");
+    AssertSequenceEqual([expectedException], warnings, "warnings");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoRetainerIpcStateReportsSuccessfulCalls()
+  {
+    var state = new AutoRetainerIpcState(IsAutoRetainerLoaded: true);
+    bool? writtenValue = null;
+
+    var readResult = state.TryReadSuppressed(
+      readSuppressed: () => true,
+      logWarning: _ => throw new InvalidOperationException("warning should not run"),
+      out var isSuppressed);
+    var writeResult = state.TryWriteSuppressed(
+      isSuppressed: false,
+      writeSuppressed: value => writtenValue = value,
+      logWarning: _ => throw new InvalidOperationException("warning should not run"));
+
+    AssertEqual(true, readResult, "read result");
+    AssertEqual(true, isSuppressed, "read suppressed value");
+    AssertEqual(true, writeResult, "write result");
+    AssertEqual<bool?>(false, writtenValue, "written value");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchCleanupPlanCancelsActiveRun()
+  {
+    var actions = AutoPinchCleanupPlan.PlanCancelActions(hasActiveSuppression: true);
+
+    AssertSequenceEqual(
+      [
+        AutoPinchCleanupAction.AbortTasks,
+        AutoPinchCleanupAction.EndSuppression,
+        AutoPinchCleanupAction.RemoveTalkListeners
+      ],
+      actions,
+      "cancel cleanup actions");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchCleanupPlanHandlesDrawCatch()
+  {
+    var actions = AutoPinchCleanupPlan.PlanDrawCatchActions(hasActiveSuppression: true);
+
+    AssertSequenceEqual(
+      [
+        AutoPinchCleanupAction.AbortTasks,
+        AutoPinchCleanupAction.EndSuppression,
+        AutoPinchCleanupAction.LogException,
+        AutoPinchCleanupAction.RemoveTalkListeners
+      ],
+      actions,
+      "draw catch cleanup actions");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchCleanupPlanDisposesActiveRun()
+  {
+    var actions = AutoPinchCleanupPlan.PlanDisposeActions(
+      hasActiveSuppression: true,
+      hasTalkAddonListeners: true);
+    var listenerOnlyActions = AutoPinchCleanupPlan.PlanDisposeActions(
+      hasActiveSuppression: false,
+      hasTalkAddonListeners: true);
+
+    AssertSequenceEqual(
+      [
+        AutoPinchCleanupAction.EndSuppression,
+        AutoPinchCleanupAction.RemoveTalkListeners
+      ],
+      actions,
+      "dispose cleanup actions");
+    AssertSequenceEqual([AutoPinchCleanupAction.RemoveTalkListeners], listenerOnlyActions, "listener only dispose cleanup actions");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchCleanupPlanWaitsForIdle()
+  {
+    var busyActions = AutoPinchCleanupPlan.PlanIdleActions(
+      hasActiveSuppression: true,
+      hasTalkAddonListeners: true,
+      isTaskManagerBusy: true);
+    var idleActions = AutoPinchCleanupPlan.PlanIdleActions(
+      hasActiveSuppression: true,
+      hasTalkAddonListeners: true,
+      isTaskManagerBusy: false);
+    var listenerOnlyActions = AutoPinchCleanupPlan.PlanIdleActions(
+      hasActiveSuppression: false,
+      hasTalkAddonListeners: true,
+      isTaskManagerBusy: false);
+    var inactiveActions = AutoPinchCleanupPlan.PlanIdleActions(
+      hasActiveSuppression: false,
+      hasTalkAddonListeners: false,
+      isTaskManagerBusy: false);
+
+    AssertSequenceEqual([], busyActions, "busy idle cleanup actions");
+    AssertSequenceEqual(
+      [
+        AutoPinchCleanupAction.EndSuppression,
+        AutoPinchCleanupAction.RemoveTalkListeners
+      ],
+      idleActions,
+      "idle cleanup actions");
+    AssertSequenceEqual([AutoPinchCleanupAction.RemoveTalkListeners], listenerOnlyActions, "listener only idle cleanup actions");
+    AssertSequenceEqual([], inactiveActions, "inactive idle cleanup actions");
+    return Task.CompletedTask;
+  }
+
   private static Task PriceRequestStateRemainsActiveUntilCurrentRequestFinishes()
   {
     var state = new MarketBoardPriceRequestState();
@@ -721,6 +1281,34 @@ internal sealed class StaticResponseHandler(HttpResponseMessage response) : Http
     CancellationToken cancellationToken)
   {
     return Task.FromResult(response);
+  }
+}
+
+internal sealed class FakeAutoRetainerSuppressionGateway(bool initialSuppressed)
+  : IAutoRetainerSuppressionGateway
+{
+  private bool _suppressed = initialSuppressed;
+
+  internal bool CanGet { get; init; } = true;
+
+  internal List<bool> SetValues { get; } = [];
+
+  internal Queue<bool> SetResults { get; } = [];
+
+  public bool TryGetSuppressed(out bool isSuppressed)
+  {
+    isSuppressed = _suppressed;
+    return CanGet;
+  }
+
+  public bool TrySetSuppressed(bool isSuppressed)
+  {
+    if (SetResults.TryDequeue(out var canSet) && !canSet)
+      return false;
+
+    _suppressed = isSuppressed;
+    SetValues.Add(isSuppressed);
+    return true;
   }
 }
 
