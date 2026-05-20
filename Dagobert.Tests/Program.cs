@@ -14,13 +14,16 @@ internal static class Program
       ("NQ average uses only NQ history rows", NqAverageUsesOnlyNqHistoryRows),
       ("HQ average uses only HQ history rows", HqAverageUsesOnlyHqHistoryRows),
       ("No price reason explains bait guard skip", NoPriceReasonExplainsBaitGuardSkip),
-      ("No price reason explains thin market sales threshold", NoPriceReasonExplainsThinMarketSalesThreshold),
+      ("No price reason explains every thin market skip reason", NoPriceReasonExplainsEveryThinMarketSkipReason),
       ("No price reason explains market board request failure", NoPriceReasonExplainsMarketBoardRequestFailure),
       ("No price reason explains missing eligible listings", NoPriceReasonExplainsMissingEligibleListings),
       ("No price reason explains duplicate response", NoPriceReasonExplainsDuplicateResponse),
+      ("No price reason explains non skip pricing mappings", NoPriceReasonExplainsNonSkipPricingMappings),
       ("No price reason falls back without debug detail", NoPriceReasonFallsBackWithoutDebugDetail),
       ("Pricing debug includes context beyond no price reason", PricingDebugIncludesContextBeyondNoPriceReason),
+      ("Pricing debug formats unknown listing count", PricingDebugFormatsUnknownListingCount),
       ("Pricing debug formats sale age from fixed clock", PricingDebugFormatsSaleAgeFromFixedClock),
+      ("Pricing debug formats singular sale age units", PricingDebugFormatsSingularSaleAgeUnits),
       ("Bait guard keeps listing-only target without sale reference", BaitGuardKeepsListingOnlyTargetWithoutSaleReference),
       ("Bait guard skips tiny cluster below sale median floor", BaitGuardSkipsTinyClusterBelowSaleMedianFloor),
       ("Bait guard accepts below-floor cluster with enough listings", BaitGuardAcceptsBelowFloorClusterWithEnoughListings),
@@ -123,21 +126,137 @@ internal static class Program
     return Task.CompletedTask;
   }
 
-  private static Task NoPriceReasonExplainsThinMarketSalesThreshold()
+  private static Task NoPriceReasonExplainsEveryThinMarketSkipReason()
   {
-    var reason = PricingMessageFormatter.FormatNoPriceReason(
-      new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
-      {
-        ThinMarketReason = ThinMarketPricingReason.NotEnoughRecentSales,
-        AveragePrice = new ThinMarketAveragePrice(5000, 1, FixedPricingNow().AddHours(-2)),
-        MinRecentSales = 3
-      },
-      FixedPricingNow());
+    var now = FixedPricingNow();
+    var cases = new (ThinMarketPricingReason ThinMarketReason, PricingDebugDetail Detail, string Expected)[]
+    {
+      (
+        ThinMarketPricingReason.FallbackDisabled,
+        new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
+        {
+          ThinMarketReason = ThinMarketPricingReason.FallbackDisabled
+        },
+        "thin market skipped because average fallback is disabled"),
+      (
+        ThinMarketPricingReason.TooManyListings,
+        new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
+        {
+          ThinMarketReason = ThinMarketPricingReason.TooManyListings,
+          ListingCount = 4
+        },
+        "thin market skipped because listing count is above the thin market limit"),
+      (
+        ThinMarketPricingReason.AverageMissingOrZero,
+        new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
+        {
+          ThinMarketReason = ThinMarketPricingReason.AverageMissingOrZero
+        },
+        "thin market skipped because Universalis returned no positive average"),
+      (
+        ThinMarketPricingReason.NotEnoughRecentSales,
+        new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
+        {
+          ThinMarketReason = ThinMarketPricingReason.NotEnoughRecentSales,
+          AveragePrice = new ThinMarketAveragePrice(5000, 1, now.AddHours(-2)),
+          MinRecentSales = 3
+        },
+        "thin market skipped because Universalis returned 1 recent sale, minimum is 3"),
+      (
+        ThinMarketPricingReason.LatestSaleMissing,
+        new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
+        {
+          ThinMarketReason = ThinMarketPricingReason.LatestSaleMissing
+        },
+        "thin market skipped because Universalis did not return a timestamped recent sale"),
+      (
+        ThinMarketPricingReason.LatestSaleTooOld,
+        new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
+        {
+          ThinMarketReason = ThinMarketPricingReason.LatestSaleTooOld,
+          AveragePrice = new ThinMarketAveragePrice(5000, 3, now.AddDays(-31)),
+          MaxSaleAgeDays = 30
+        },
+        "thin market skipped because newest Universalis sale is 31 days ago and max age is 30 days"),
+      (
+        ThinMarketPricingReason.EmptyBoardUseAverage,
+        new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
+        {
+          ThinMarketReason = ThinMarketPricingReason.EmptyBoardUseAverage
+        },
+        "thin market skipped because thin market selected an average for an empty board, but the result was not available to set"),
+      (
+        ThinMarketPricingReason.FloorMissing,
+        new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
+        {
+          ThinMarketReason = ThinMarketPricingReason.FloorMissing
+        },
+        "thin market skipped because there is no competitor floor"),
+      (
+        ThinMarketPricingReason.FloorOutsideTolerance,
+        new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
+        {
+          ThinMarketReason = ThinMarketPricingReason.FloorOutsideTolerance,
+          FloorPrice = 10000,
+          AveragePrice = new ThinMarketAveragePrice(5000, 3, now.AddHours(-2)),
+          TolerancePercent = 40.0f
+        },
+        $"thin market skipped because floor {FormatExpectedGil(10000)} gil is outside 40% tolerance of Universalis average {FormatExpectedGil(5000)} gil"),
+      (
+        ThinMarketPricingReason.FloorWithinTolerance,
+        new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
+        {
+          ThinMarketReason = ThinMarketPricingReason.FloorWithinTolerance
+        },
+        "thin market skipped because thin market found a valid floor, but the result was not available to set")
+    };
 
-    AssertEqual(
-      "thin market skipped because Universalis returned 1 recent sale, minimum is 3",
-      reason,
-      "thin market no price reason");
+    foreach (var testCase in cases)
+    {
+      var reason = PricingMessageFormatter.FormatNoPriceReason(testCase.Detail, now);
+
+      AssertEqual(
+        testCase.Expected,
+        reason,
+        $"thin market no price reason {testCase.ThinMarketReason}");
+    }
+
+    return Task.CompletedTask;
+  }
+
+  private static Task NoPriceReasonExplainsNonSkipPricingMappings()
+  {
+    var cases = new (PricingDebugReason DebugReason, PricingDebugDetail Detail, string Expected)[]
+    {
+      (
+        PricingDebugReason.OwnPriceAlreadyLowest,
+        new PricingDebugDetail(PricingDebugReason.OwnPriceAlreadyLowest),
+        "your listing is already at or below the credible competitor"),
+      (
+        PricingDebugReason.UndercutCompetitor,
+        new PricingDebugDetail(PricingDebugReason.UndercutCompetitor),
+        "a price was calculated but was not available to set"),
+      (
+        PricingDebugReason.ThinMarketUseAverage,
+        new PricingDebugDetail(PricingDebugReason.ThinMarketUseAverage),
+        "thin market selected a Universalis average, but the result was not available to set"),
+      (
+        PricingDebugReason.ThinMarketUndercutFloor,
+        new PricingDebugDetail(PricingDebugReason.ThinMarketUndercutFloor),
+        "thin market selected an undercut floor, but the result was not available to set"),
+      (
+        PricingDebugReason.CachedPrice,
+        new PricingDebugDetail(PricingDebugReason.CachedPrice),
+        "a cached price was selected, but the result was not available to set")
+    };
+
+    foreach (var testCase in cases)
+    {
+      var reason = PricingMessageFormatter.FormatNoPriceReason(testCase.Detail, FixedPricingNow());
+
+      AssertEqual(testCase.Expected, reason, $"no price reason {testCase.DebugReason}");
+    }
+
     return Task.CompletedTask;
   }
 
@@ -223,6 +342,42 @@ internal static class Program
 
     AssertContains("newest Universalis sale is 31 days ago", debug, "debug stale sale reason");
     AssertContains("newest sale 31 days ago", debug, "debug stale sale context");
+    return Task.CompletedTask;
+  }
+
+  private static Task PricingDebugFormatsUnknownListingCount()
+  {
+    var debug = PricingMessageFormatter.FormatPricingDebug(
+      new PricingDebugDetail(PricingDebugReason.NoEligibleListings),
+      FixedPricingNow());
+
+    AssertContains("listings unknown", debug, "debug unknown listing count");
+    return Task.CompletedTask;
+  }
+
+  private static Task PricingDebugFormatsSingularSaleAgeUnits()
+  {
+    var cases = new (DateTimeOffset LatestSaleAt, string Expected)[]
+    {
+      (FixedPricingNow().AddDays(-1), "1 day ago"),
+      (FixedPricingNow().AddHours(-1), "1 hour ago"),
+      (FixedPricingNow().AddMinutes(-1), "1 minute ago")
+    };
+
+    foreach (var testCase in cases)
+    {
+      var detail = new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
+      {
+        ThinMarketReason = ThinMarketPricingReason.LatestSaleTooOld,
+        AveragePrice = new ThinMarketAveragePrice(5000, 3, testCase.LatestSaleAt),
+        MaxSaleAgeDays = 30
+      };
+
+      var debug = PricingMessageFormatter.FormatPricingDebug(detail, FixedPricingNow());
+
+      AssertContains(testCase.Expected, debug, $"debug sale age {testCase.Expected}");
+    }
+
     return Task.CompletedTask;
   }
 

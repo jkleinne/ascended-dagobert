@@ -24,12 +24,12 @@ internal static class PricingMessageFormatter
       PricingDebugReason.DuplicateMarketBoardRequest => "a duplicate market board response was ignored",
       PricingDebugReason.NoEligibleListings => "no eligible market board listings were found",
       PricingDebugReason.NoCredibleListing => "bait guard found no credible listing",
-      PricingDebugReason.OwnPriceAlreadyLowest => "own listing is already the lowest credible price",
-      PricingDebugReason.UndercutCompetitor => "competitor undercut price was selected",
-      PricingDebugReason.ThinMarketUseAverage => "thin market used the Universalis average",
-      PricingDebugReason.ThinMarketUndercutFloor => "thin market undercut the competitor floor",
+      PricingDebugReason.OwnPriceAlreadyLowest => "your listing is already at or below the credible competitor",
+      PricingDebugReason.UndercutCompetitor => "a price was calculated but was not available to set",
+      PricingDebugReason.ThinMarketUseAverage => "thin market selected a Universalis average, but the result was not available to set",
+      PricingDebugReason.ThinMarketUndercutFloor => "thin market selected an undercut floor, but the result was not available to set",
       PricingDebugReason.ThinMarketSkip => FormatThinMarketSkipReason(debugDetail, now),
-      PricingDebugReason.CachedPrice => "cached item price was reused",
+      PricingDebugReason.CachedPrice => "a cached price was selected, but the result was not available to set",
       _ => FallbackNoPriceReason
     };
   }
@@ -94,11 +94,11 @@ internal static class PricingMessageFormatter
       ThinMarketPricingReason.AverageMissingOrZero => "Universalis returned no positive average",
       ThinMarketPricingReason.NotEnoughRecentSales => $"Universalis returned {FormatRecentSalesCount(debugDetail)} recent {PluralizeSaleCount(debugDetail)}, minimum is {GetMinimumRecentSales(debugDetail)}",
       ThinMarketPricingReason.LatestSaleMissing => "Universalis did not return a timestamped recent sale",
-      ThinMarketPricingReason.LatestSaleTooOld => $"newest Universalis sale is {FormatLatestSaleAge(debugDetail.AveragePrice?.LatestSaleAt, now)} and max age is {GetMaxSaleAgeDays(debugDetail)} days",
+      ThinMarketPricingReason.LatestSaleTooOld => $"newest Universalis sale is {FormatLatestSaleAge(debugDetail.AveragePrice?.LatestSaleAt, now)} and max age is {FormatDuration(GetMaxSaleAgeDays(debugDetail), "day")}",
       ThinMarketPricingReason.FloorMissing => "there is no competitor floor",
       ThinMarketPricingReason.FloorOutsideTolerance => $"floor {FormatGil(debugDetail.FloorPrice)} gil is outside {FormatPercent(debugDetail.TolerancePercent)}% tolerance of Universalis average {FormatAveragePrice(debugDetail)} gil",
-      ThinMarketPricingReason.EmptyBoardUseAverage => "empty board average pricing was not selected",
-      ThinMarketPricingReason.FloorWithinTolerance => "floor is within tolerance but no price was selected",
+      ThinMarketPricingReason.EmptyBoardUseAverage => "thin market selected an average for an empty board, but the result was not available to set",
+      ThinMarketPricingReason.FloorWithinTolerance => "thin market found a valid floor, but the result was not available to set",
       _ => "thin market policy skipped the item"
     };
   }
@@ -135,7 +135,9 @@ internal static class PricingMessageFormatter
 
   private static string FormatListingCount(PricingDebugDetail debugDetail)
   {
-    return $"listings {Math.Max(MinimumListingCount, debugDetail.ListingCount ?? MinimumListingCount)}";
+    return debugDetail.ListingCount is null
+      ? "listings unknown"
+      : $"listings {Math.Max(MinimumListingCount, debugDetail.ListingCount.Value)}";
   }
 
   private static string FormatAveragePrice(PricingDebugDetail debugDetail)
@@ -177,12 +179,19 @@ internal static class PricingMessageFormatter
       return "in the future";
 
     if (age.TotalDays >= 1)
-      return $"{(int)age.TotalDays} days ago";
+      return $"{FormatDuration((int)age.TotalDays, "day")} ago";
 
     if (age.TotalHours >= 1)
-      return $"{(int)age.TotalHours} hours ago";
+      return $"{FormatDuration((int)age.TotalHours, "hour")} ago";
 
-    return $"{Math.Max(MinimumElapsedMinutes, (int)age.TotalMinutes)} minutes ago";
+    return $"{FormatDuration(Math.Max(MinimumElapsedMinutes, (int)age.TotalMinutes), "minute")} ago";
+  }
+
+  private static string FormatDuration(int value, string unit)
+  {
+    return value == 1
+      ? $"1 {unit}"
+      : $"{value:N0} {unit}s";
   }
 
   private static string FormatGil(int? gil)
