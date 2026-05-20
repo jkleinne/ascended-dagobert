@@ -537,7 +537,7 @@ namespace Dagobert
               _mbHandler.IsPricePending,
               _skipCurrentItem,
               _pricingDebugDetail?.Reason);
-            Communicator.PrintNoPriceToSetError(itemName);
+            Communicator.PrintNoPriceToSetError(itemName, _pricingDebugDetail);
             Communicator.PrintPricingDebug(itemName, _pricingDebugDetail);
             ECommons.Automation.Callback.Fire(&retainerSell->AtkUnitBase, true, 1); // cancel
             ui->Close(true);
