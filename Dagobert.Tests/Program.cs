@@ -36,6 +36,8 @@ internal static class Program
       ("Sale reference rejects stale newest matching sale", SaleReferenceRejectsStaleNewestMatchingSale),
       ("Sale reference skips invalid sale rows", SaleReferenceSkipsInvalidSaleRows),
       ("Post pinch workflow starts with prepare before wait and set", PostPinchWorkflowStartsWithPrepareBeforeWaitAndSet),
+      ("Post pinch workflow forces fresh compare on sell addon setup", PostPinchWorkflowForcesFreshCompareOnSellAddonSetup),
+      ("Post pinch workflow ignores sell addon setup with busy task manager", PostPinchWorkflowIgnoresSellAddonSetupWithBusyTaskManager),
       ("Post pinch workflow ignores non button press events", PostPinchWorkflowIgnoresNonButtonPressEvents),
       ("Post pinch workflow ignores missing key press", PostPinchWorkflowIgnoresMissingKeyPress),
       ("Post pinch workflow ignores busy task manager", PostPinchWorkflowIgnoresBusyTaskManager),
@@ -569,6 +571,38 @@ internal static class Program
       ],
       actions,
       "post pinch start actions");
+    return Task.CompletedTask;
+  }
+
+  private static Task PostPinchWorkflowForcesFreshCompareOnSellAddonSetup()
+  {
+    var actions = PostPinchWorkflow.PlanSellAddonSetupActions(
+      isFeatureEnabled: true,
+      isPostPinchKeyHeld: true,
+      isTaskManagerBusy: false,
+      isSellAddonReady: true);
+
+    AssertSequenceEqual(
+      [
+        PostPinchWorkflowAction.ForceComparePrice,
+        PostPinchWorkflowAction.DelayForMarketBoard,
+        PostPinchWorkflowAction.WaitForMarketPrice,
+        PostPinchWorkflowAction.SetNewPrice
+      ],
+      actions,
+      "post pinch sell addon setup actions");
+    return Task.CompletedTask;
+  }
+
+  private static Task PostPinchWorkflowIgnoresSellAddonSetupWithBusyTaskManager()
+  {
+    var actions = PostPinchWorkflow.PlanSellAddonSetupActions(
+      isFeatureEnabled: true,
+      isPostPinchKeyHeld: true,
+      isTaskManagerBusy: true,
+      isSellAddonReady: true);
+
+    AssertSequenceEqual([], actions, "post pinch sell addon setup busy actions");
     return Task.CompletedTask;
   }
 
