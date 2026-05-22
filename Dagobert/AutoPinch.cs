@@ -38,7 +38,8 @@ namespace Dagobert
     private readonly AutoPinchTaskGuard _autoPinchTaskGuard;
     private bool _hasTalkAddonListeners;
     private Dictionary<string, int?> _cachedPrices = [];
-    private const uint ComparePricesButtonId = 4;
+    private const uint ComparePricesButtonNodeId = 4;
+    private const int ComparePricesCallbackId = 4;
 
     public AutoPinch(
       IAverageSalePriceProvider averagePriceProvider,
@@ -498,9 +499,30 @@ namespace Dagobert
             itemName,
             _mbHandler.IsPricePending);
           _mbHandler.PrepareForPriceRequest();
-          ECommons.Automation.Callback.Fire(&addon->AtkUnitBase, true, 4);
+          ECommons.Automation.Callback.Fire(&addon->AtkUnitBase, true, ComparePricesCallbackId);
           return true;
         }
+      }
+
+      return false;
+    }
+
+    private unsafe bool? ClickComparePriceFresh()
+    {
+      if (_skipCurrentItem)
+        return true;
+
+      if (GenericHelpers.TryGetAddonByName<AddonRetainerSell>("RetainerSell", out var addon) && GenericHelpers.IsAddonReady(&addon->AtkUnitBase))
+      {
+        var itemName = addon->ItemName->NodeText.ToString();
+        Svc.Log.Debug(
+          "{ItemName}: forcing fresh compare prices, pending market board request {IsPricePending}",
+          itemName,
+          _mbHandler.IsPricePending);
+        ClearCurrentPriceRequestState();
+        _mbHandler.PrepareForPriceRequest();
+        ECommons.Automation.Callback.Fire(&addon->AtkUnitBase, true, ComparePricesCallbackId);
+        return true;
       }
 
       return false;
@@ -600,24 +622,26 @@ namespace Dagobert
 
       RegisterComparePricePostPinchHandler(addon);
 
-      if (_taskManager.IsBusy)
+      var actions = PostPinchWorkflow.PlanSellAddonSetupActions(
+        isFeatureEnabled: Plugin.Configuration.EnablePostPinchkey,
+        isPostPinchKeyHeld: Plugin.KeyState[Plugin.Configuration.PostPinchKey],
+        isTaskManagerBusy: _taskManager.IsBusy,
+        isSellAddonReady: true);
+
+      if (actions.Count == 0)
         return;
 
-      if (Plugin.Configuration.EnablePostPinchkey && Plugin.KeyState[Plugin.Configuration.PostPinchKey])
-      {
-        Svc.Log.Debug(
-          "Post pinch key {PostPinchKey} detected, enqueueing posted price update tasks",
-          Plugin.Configuration.PostPinchKey);
-        _taskManager.Enqueue(ClickComparePrice, $"ClickComparePricePosted");
-        _taskManager.DelayNext(Plugin.Configuration.MarketBoardKeepOpenMS);
-        _taskManager.Enqueue(WaitForMarketPrice, $"WaitForMarketPricePosted");
-        _taskManager.Enqueue(SetNewPrice, $"SetNewPricePosted");
-      }
+      Svc.Log.Debug(
+        "Post pinch key {PostPinchKey} detected, enqueueing posted price update tasks",
+        Plugin.Configuration.PostPinchKey);
+
+      foreach (var action in actions)
+        ExecutePostPinchWorkflowAction(action);
     }
 
     private unsafe void RegisterComparePricePostPinchHandler(AddonRetainerSell* addon)
     {
-      var comparePricesButton = addon->GetComponentButtonById(ComparePricesButtonId);
+      var comparePricesButton = addon->GetComponentButtonById(ComparePricesButtonNodeId);
       var ownerNode = comparePricesButton == null
         ? null
         : comparePricesButton->OwnerNode;
@@ -661,6 +685,12 @@ namespace Dagobert
         case PostPinchWorkflowAction.PreparePriceRequest:
           ClearCurrentPriceRequestState();
           _mbHandler.PrepareForPriceRequest();
+          break;
+        case PostPinchWorkflowAction.ForceComparePrice:
+          _taskManager.Enqueue(ClickComparePriceFresh, "ClickComparePriceFreshPostSetup");
+          break;
+        case PostPinchWorkflowAction.DelayForMarketBoard:
+          _taskManager.DelayNext(Plugin.Configuration.MarketBoardKeepOpenMS);
           break;
         case PostPinchWorkflowAction.WaitForMarketPrice:
           _taskManager.Enqueue(WaitForMarketPrice, "WaitForMarketPricePostCompare");
