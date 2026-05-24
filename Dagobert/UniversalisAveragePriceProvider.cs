@@ -37,6 +37,7 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
 {
   private const string ListingsQueryValue = "0";
   private const int DefaultRecentSaleReferenceEntries = 20;
+  private const int MinimumAveragePriceHistoryEntries = 20;
   private const string AveragePriceNqField = "averagePriceNQ";
   private const string AveragePriceHqField = "averagePriceHQ";
   private const string RecentHistoryField = "recentHistory";
@@ -51,7 +52,7 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
     int recentHistoryLimit,
     CancellationToken cancellationToken)
   {
-    var entries = Math.Max(1, recentHistoryLimit);
+    var entries = Math.Max(MinimumAveragePriceHistoryEntries, recentHistoryLimit);
     var requestUri = string.Format(
       CultureInfo.InvariantCulture,
       "{0}/{1}?listings={2}&entries={3}",
@@ -236,14 +237,23 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
         if (!IsMatchingQualitySale(sale, isHq))
           continue;
 
-        recentHistoryCount++;
         if (!sale.TryGetProperty(TimestampField, out var timestamp) ||
             !timestamp.TryGetInt64(out var unixTimestamp))
           continue;
 
-        var saleTime = DateTimeOffset.FromUnixTimeSeconds(unixTimestamp);
-        if (latestSaleAt is null || saleTime > latestSaleAt.Value)
-          latestSaleAt = saleTime;
+        DateTimeOffset saleAt;
+        try
+        {
+          saleAt = DateTimeOffset.FromUnixTimeSeconds(unixTimestamp);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+          continue;
+        }
+
+        recentHistoryCount++;
+        if (latestSaleAt is null || saleAt > latestSaleAt.Value)
+          latestSaleAt = saleAt;
       }
     }
 
