@@ -237,14 +237,23 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
         if (!IsMatchingQualitySale(sale, isHq))
           continue;
 
-        recentHistoryCount++;
         if (!sale.TryGetProperty(TimestampField, out var timestamp) ||
             !timestamp.TryGetInt64(out var unixTimestamp))
           continue;
 
-        var saleTime = DateTimeOffset.FromUnixTimeSeconds(unixTimestamp);
-        if (latestSaleAt is null || saleTime > latestSaleAt.Value)
-          latestSaleAt = saleTime;
+        DateTimeOffset saleAt;
+        try
+        {
+          saleAt = DateTimeOffset.FromUnixTimeSeconds(unixTimestamp);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+          continue;
+        }
+
+        recentHistoryCount++;
+        if (latestSaleAt is null || saleAt > latestSaleAt.Value)
+          latestSaleAt = saleAt;
       }
     }
 

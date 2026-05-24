@@ -16,6 +16,7 @@ internal static class Program
       ("NQ average uses only NQ history rows", NqAverageUsesOnlyNqHistoryRows),
       ("HQ average uses only HQ history rows", HqAverageUsesOnlyHqHistoryRows),
       ("Thin market average requests stable recent history sample", ThinMarketAverageRequestsStableRecentHistorySample),
+      ("Average skips invalid timestamp history rows", AverageSkipsInvalidTimestampHistoryRows),
       ("No price reason explains bait guard skip", NoPriceReasonExplainsBaitGuardSkip),
       ("No price reason explains every thin market skip reason", NoPriceReasonExplainsEveryThinMarketSkipReason),
       ("No price reason explains market board request failure", NoPriceReasonExplainsMarketBoardRequestFailure),
@@ -167,6 +168,8 @@ internal static class Program
     var threeMinimumProvider = CreateProvider(threeMinimumHandler);
     using var twoMinimumHandler = new RequestRecordingResponseHandler(responseJson);
     var twoMinimumProvider = CreateProvider(twoMinimumHandler);
+    using var twentyOneMinimumHandler = new RequestRecordingResponseHandler(responseJson);
+    var twentyOneMinimumProvider = CreateProvider(twentyOneMinimumHandler);
 
     var averageWithThreeMinimum = await threeMinimumProvider.GetAverageSalePriceAsync(
       34,
@@ -180,11 +183,19 @@ internal static class Program
       false,
       2,
       CancellationToken.None);
+    var averageWithTwentyOneMinimum = await twentyOneMinimumProvider.GetAverageSalePriceAsync(
+      34,
+      3920,
+      false,
+      21,
+      CancellationToken.None);
 
     var priceWithThreeMinimum = averageWithThreeMinimum
                                 ?? throw new InvalidOperationException("expected average with minimum 3");
     var priceWithTwoMinimum = averageWithTwoMinimum
                               ?? throw new InvalidOperationException("expected average with minimum 2");
+    _ = averageWithTwentyOneMinimum
+        ?? throw new InvalidOperationException("expected average with minimum 21");
     AssertEqual(
       "https://universalis.test/api/v2/34/3920?listings=0&entries=20",
       threeMinimumHandler.RequestUris.Single(),
@@ -193,10 +204,41 @@ internal static class Program
       "https://universalis.test/api/v2/34/3920?listings=0&entries=20",
       twoMinimumHandler.RequestUris.Single(),
       "minimum 2 request uri");
+    AssertEqual(
+      "https://universalis.test/api/v2/34/3920?listings=0&entries=21",
+      twentyOneMinimumHandler.RequestUris.Single(),
+      "minimum 21 request uri");
     AssertEqual(2, priceWithThreeMinimum.RecentHistoryCount, "minimum 3 recent history count");
     AssertEqual(2, priceWithTwoMinimum.RecentHistoryCount, "minimum 2 recent history count");
     AssertEqual(DateTimeOffset.FromUnixTimeSeconds(newestNqSale), priceWithThreeMinimum.LatestSaleAt, "minimum 3 latest sale");
     AssertEqual(DateTimeOffset.FromUnixTimeSeconds(newestNqSale), priceWithTwoMinimum.LatestSaleAt, "minimum 2 latest sale");
+  }
+
+  private static async Task AverageSkipsInvalidTimestampHistoryRows()
+  {
+    const long newestValidNqSale = 1778600000;
+    const long olderValidNqSale = 1778500000;
+    const long invalidNqSale = 999999999999999999;
+    var provider = CreateProvider(
+      $$"""
+      {
+        "averagePriceNQ": 1000,
+        "averagePriceHQ": 2000,
+        "recentHistory": [
+          { "hq": false, "pricePerUnit": 999, "timestamp": {{invalidNqSale}} },
+          { "hq": true, "pricePerUnit": 2000, "timestamp": {{newestValidNqSale}} },
+          { "hq": false, "pricePerUnit": 1000, "timestamp": {{newestValidNqSale}} },
+          { "hq": false, "pricePerUnit": 1100, "timestamp": {{olderValidNqSale}} }
+        ]
+      }
+      """);
+
+    var average = await provider.GetAverageSalePriceAsync(34, 3920, false, 3, CancellationToken.None);
+
+    var price = average ?? throw new InvalidOperationException("expected average with invalid timestamp row skipped");
+    AssertEqual((uint)1000, price.UnitPrice, "average with invalid timestamp price");
+    AssertEqual(2, price.RecentHistoryCount, "average valid recent history count");
+    AssertEqual(DateTimeOffset.FromUnixTimeSeconds(newestValidNqSale), price.LatestSaleAt, "average latest valid sale");
   }
 
   private static Task NoPriceReasonExplainsBaitGuardSkip()
