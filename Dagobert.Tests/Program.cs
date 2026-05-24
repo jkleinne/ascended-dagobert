@@ -15,6 +15,7 @@ internal static class Program
     {
       ("NQ average uses only NQ history rows", NqAverageUsesOnlyNqHistoryRows),
       ("HQ average uses only HQ history rows", HqAverageUsesOnlyHqHistoryRows),
+      ("Thin market average requests stable recent history sample", ThinMarketAverageRequestsStableRecentHistorySample),
       ("No price reason explains bait guard skip", NoPriceReasonExplainsBaitGuardSkip),
       ("No price reason explains every thin market skip reason", NoPriceReasonExplainsEveryThinMarketSkipReason),
       ("No price reason explains market board request failure", NoPriceReasonExplainsMarketBoardRequestFailure),
@@ -143,6 +144,59 @@ internal static class Program
     AssertEqual((uint)2500, price.UnitPrice, "HQ average price");
     AssertEqual(2, price.RecentHistoryCount, "HQ recent history count");
     AssertEqual(DateTimeOffset.FromUnixTimeSeconds(newestHqSale), price.LatestSaleAt, "HQ latest sale");
+  }
+
+  private static async Task ThinMarketAverageRequestsStableRecentHistorySample()
+  {
+    const long newestNqSale = 1778600000;
+    const long olderNqSale = 1778500000;
+    const long hqSaleBetweenNqRows = 1778550000;
+    var responseJson =
+      $$"""
+      {
+        "averagePriceNQ": 1000,
+        "averagePriceHQ": 2000,
+        "recentHistory": [
+          { "hq": false, "pricePerUnit": 1000, "timestamp": {{newestNqSale}} },
+          { "hq": true, "pricePerUnit": 2000, "timestamp": {{hqSaleBetweenNqRows}} },
+          { "hq": false, "pricePerUnit": 1100, "timestamp": {{olderNqSale}} }
+        ]
+      }
+      """;
+    using var threeMinimumHandler = new RequestRecordingResponseHandler(responseJson);
+    var threeMinimumProvider = CreateProvider(threeMinimumHandler);
+    using var twoMinimumHandler = new RequestRecordingResponseHandler(responseJson);
+    var twoMinimumProvider = CreateProvider(twoMinimumHandler);
+
+    var averageWithThreeMinimum = await threeMinimumProvider.GetAverageSalePriceAsync(
+      34,
+      3920,
+      false,
+      3,
+      CancellationToken.None);
+    var averageWithTwoMinimum = await twoMinimumProvider.GetAverageSalePriceAsync(
+      34,
+      3920,
+      false,
+      2,
+      CancellationToken.None);
+
+    var priceWithThreeMinimum = averageWithThreeMinimum
+                                ?? throw new InvalidOperationException("expected average with minimum 3");
+    var priceWithTwoMinimum = averageWithTwoMinimum
+                              ?? throw new InvalidOperationException("expected average with minimum 2");
+    AssertEqual(
+      "https://universalis.test/api/v2/34/3920?listings=0&entries=20",
+      threeMinimumHandler.RequestUris.Single(),
+      "minimum 3 request uri");
+    AssertEqual(
+      "https://universalis.test/api/v2/34/3920?listings=0&entries=20",
+      twoMinimumHandler.RequestUris.Single(),
+      "minimum 2 request uri");
+    AssertEqual(2, priceWithThreeMinimum.RecentHistoryCount, "minimum 3 recent history count");
+    AssertEqual(2, priceWithTwoMinimum.RecentHistoryCount, "minimum 2 recent history count");
+    AssertEqual(DateTimeOffset.FromUnixTimeSeconds(newestNqSale), priceWithThreeMinimum.LatestSaleAt, "minimum 3 latest sale");
+    AssertEqual(DateTimeOffset.FromUnixTimeSeconds(newestNqSale), priceWithTwoMinimum.LatestSaleAt, "minimum 2 latest sale");
   }
 
   private static Task NoPriceReasonExplainsBaitGuardSkip()
@@ -1267,6 +1321,20 @@ internal static class Program
     return new UniversalisAveragePriceProvider(httpClient, new TestPluginLog());
   }
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Reliability",
+    "CA2000:Dispose objects before losing scope",
+    Justification = "Test providers use short-lived HttpClient instances that remain alive for the scenario duration.")]
+  private static UniversalisAveragePriceProvider CreateProvider(HttpMessageHandler handler)
+  {
+    var httpClient = new HttpClient(handler)
+    {
+      BaseAddress = new Uri("https://universalis.test/api/v2/")
+    };
+
+    return new UniversalisAveragePriceProvider(httpClient, new TestPluginLog());
+  }
+
   private static DateTimeOffset FixedPricingNow()
   {
     return DateTimeOffset.FromUnixTimeSeconds(1778600000);
@@ -1314,6 +1382,24 @@ internal sealed class StaticResponseHandler(HttpResponseMessage response) : Http
     HttpRequestMessage request,
     CancellationToken cancellationToken)
   {
+    return Task.FromResult(response);
+  }
+}
+
+internal sealed class RequestRecordingResponseHandler(string responseJson) : HttpMessageHandler
+{
+  internal List<string> RequestUris { get; } = [];
+
+  protected override Task<HttpResponseMessage> SendAsync(
+    HttpRequestMessage request,
+    CancellationToken cancellationToken)
+  {
+    RequestUris.Add(request.RequestUri?.ToString() ?? string.Empty);
+    var response = new HttpResponseMessage(HttpStatusCode.OK)
+    {
+      Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
+    };
+
     return Task.FromResult(response);
   }
 }

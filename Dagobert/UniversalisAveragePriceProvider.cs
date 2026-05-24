@@ -37,6 +37,7 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
 {
   private const string ListingsQueryValue = "0";
   private const int DefaultRecentSaleReferenceEntries = 20;
+  private const int DefaultAveragePriceHistoryEntries = 20;
   private const string AveragePriceNqField = "averagePriceNQ";
   private const string AveragePriceHqField = "averagePriceHQ";
   private const string RecentHistoryField = "recentHistory";
@@ -51,7 +52,7 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
     int recentHistoryLimit,
     CancellationToken cancellationToken)
   {
-    var entries = Math.Max(1, recentHistoryLimit);
+    var entries = Math.Max(DefaultAveragePriceHistoryEntries, recentHistoryLimit);
     var requestUri = string.Format(
       CultureInfo.InvariantCulture,
       "{0}/{1}?listings={2}&entries={3}",
