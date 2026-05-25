@@ -42,14 +42,12 @@ namespace Dagobert
     private const int ComparePricesCallbackId = 4;
 
     public AutoPinch(
-      IAverageSalePriceProvider averagePriceProvider,
-      IRecentSaleReferenceProvider saleReferenceProvider,
+      ISaleReferenceProvider saleReferenceProvider,
       MarketBoardRequestTracker marketBoardRequestTracker,
       AutoRetainerSuppressionCoordinator autoRetainerSuppressionCoordinator)
       : base("Ascended Dagobert", ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.AlwaysUseWindowPadding | ImGuiWindowFlags.AlwaysAutoResize, true)
     {
       _mbHandler = new MarketBoardHandler(
-        averagePriceProvider,
         saleReferenceProvider,
         marketBoardRequestTracker);
       _mbHandler.NewPriceReceived += MBHandler_NewPriceReceived;

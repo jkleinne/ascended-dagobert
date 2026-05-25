@@ -26,7 +26,7 @@ internal static class PricingMessageFormatter
       PricingDebugReason.NoCredibleListing => "bait guard found no credible listing",
       PricingDebugReason.OwnPriceAlreadyLowest => "your listing is already at or below the credible competitor",
       PricingDebugReason.UndercutCompetitor => "a price was calculated but was not available to set",
-      PricingDebugReason.ThinMarketUseAverage => "thin market selected a Universalis average, but the result was not available to set",
+      PricingDebugReason.ThinMarketUseReference => "thin market selected a Universalis sale reference, but the result was not available to set",
       PricingDebugReason.ThinMarketUndercutFloor => "thin market selected an undercut floor, but the result was not available to set",
       PricingDebugReason.ThinMarketSkip => FormatThinMarketSkipReason(debugDetail, now),
       PricingDebugReason.CachedPrice => "a cached price was selected, but the result was not available to set",
@@ -44,7 +44,7 @@ internal static class PricingMessageFormatter
       PricingDebugReason.NoCredibleListing => $"skipped because bait guard found no credible listing; {FormatListingCount(debugDetail)}",
       PricingDebugReason.OwnPriceAlreadyLowest => FormatOwnPriceDebug(debugDetail),
       PricingDebugReason.UndercutCompetitor => FormatUndercutDebug(debugDetail),
-      PricingDebugReason.ThinMarketUseAverage => FormatThinMarketUseAverage(debugDetail, now),
+      PricingDebugReason.ThinMarketUseReference => FormatThinMarketUseReference(debugDetail, now),
       PricingDebugReason.ThinMarketUndercutFloor => FormatThinMarketUndercutFloor(debugDetail, now),
       PricingDebugReason.ThinMarketSkip => FormatThinMarketSkipDebug(debugDetail, now),
       PricingDebugReason.CachedPrice => $"used cached price {FormatGil(debugDetail.SelectedPrice)} gil from a previous decision for this item",
@@ -65,14 +65,14 @@ internal static class PricingMessageFormatter
     return $"undercut credible competitor at {FormatGil(debugDetail.CompetitorPrice)} gil to {FormatGil(debugDetail.SelectedPrice)} gil using {FormatUndercutMode(debugDetail)}";
   }
 
-  private static string FormatThinMarketUseAverage(PricingDebugDetail debugDetail, DateTimeOffset now)
+  private static string FormatThinMarketUseReference(PricingDebugDetail debugDetail, DateTimeOffset now)
   {
-    return $"thin market used Universalis average {FormatAveragePrice(debugDetail)} gil as the price; {FormatThinContext(debugDetail, now)}";
+    return $"thin market used Universalis sale reference {FormatSaleReference(debugDetail)} gil as the price; {FormatThinContext(debugDetail, now)}";
   }
 
   private static string FormatThinMarketUndercutFloor(PricingDebugDetail debugDetail, DateTimeOffset now)
   {
-    return $"thin market checked Universalis average {FormatAveragePrice(debugDetail)} gil and undercut floor {FormatGil(debugDetail.FloorPrice)} gil to {FormatGil(debugDetail.SelectedPrice)} gil; {FormatThinContext(debugDetail, now)}";
+    return $"thin market checked Universalis sale reference {FormatSaleReference(debugDetail)} gil and undercut floor {FormatGil(debugDetail.FloorPrice)} gil to {FormatGil(debugDetail.SelectedPrice)} gil; {FormatThinContext(debugDetail, now)}";
   }
 
   private static string FormatThinMarketSkipDebug(PricingDebugDetail debugDetail, DateTimeOffset now)
@@ -89,15 +89,15 @@ internal static class PricingMessageFormatter
   {
     return debugDetail.ThinMarketReason switch
     {
-      ThinMarketPricingReason.FallbackDisabled => "average fallback is disabled",
+      ThinMarketPricingReason.FallbackDisabled => "sale reference fallback is disabled",
       ThinMarketPricingReason.TooManyListings => "listing count is above the thin market limit",
-      ThinMarketPricingReason.AverageMissingOrZero => "Universalis returned no positive average",
+      ThinMarketPricingReason.SaleReferenceMissingOrZero => "Universalis returned no usable sale reference",
       ThinMarketPricingReason.NotEnoughRecentSales => $"Universalis returned {FormatRecentSalesCount(debugDetail)} recent {PluralizeSaleCount(debugDetail)}, minimum is {GetMinimumRecentSales(debugDetail)}",
-      ThinMarketPricingReason.LatestSaleMissing => "Universalis did not return a timestamped recent sale",
-      ThinMarketPricingReason.LatestSaleTooOld => $"newest Universalis sale is {FormatLatestSaleAge(debugDetail.AveragePrice?.LatestSaleAt, now)} and max age is {FormatDuration(GetMaxSaleAgeDays(debugDetail), "day")}",
-      ThinMarketPricingReason.FloorMissing => "there is no competitor floor",
-      ThinMarketPricingReason.FloorOutsideTolerance => $"floor {FormatGil(debugDetail.FloorPrice)} gil is outside {FormatPercent(debugDetail.TolerancePercent)}% tolerance of Universalis average {FormatAveragePrice(debugDetail)} gil",
-      ThinMarketPricingReason.EmptyBoardUseAverage => "thin market selected an average for an empty board, but the result was not available to set",
+      ThinMarketPricingReason.LatestSaleTooOld => $"newest Universalis sale is {FormatLatestSaleAge(debugDetail.SaleReference?.LatestSaleAt, now)} and max age is {FormatDuration(GetMaxSaleAgeDays(debugDetail), "day")}",
+      ThinMarketPricingReason.OwnPriceOutsideTolerance => $"own price {FormatGil(debugDetail.OwnLowestPrice)} gil is outside {FormatPercent(debugDetail.TolerancePercent)}% tolerance of Universalis sale reference {FormatSaleReference(debugDetail)} gil",
+      ThinMarketPricingReason.FloorOutsideTolerance => $"floor {FormatGil(debugDetail.FloorPrice)} gil is outside {FormatPercent(debugDetail.TolerancePercent)}% tolerance of Universalis sale reference {FormatSaleReference(debugDetail)} gil",
+      ThinMarketPricingReason.EmptyBoardUseReference => "thin market selected a sale reference for an empty board, but the result was not available to set",
+      ThinMarketPricingReason.OwnPriceWithinTolerance => "thin market found an own price near the sale reference, but the result was not available to set",
       ThinMarketPricingReason.FloorWithinTolerance => "thin market found a valid floor, but the result was not available to set",
       _ => "thin market policy skipped the item"
     };
@@ -116,10 +116,10 @@ internal static class PricingMessageFormatter
     if (debugDetail.OwnLowestPrice is not null)
       parts.Add($"own lowest {FormatGil(debugDetail.OwnLowestPrice)} gil");
 
-    if (debugDetail.AveragePrice is not null)
+    if (debugDetail.SaleReference is not null)
     {
-      parts.Add($"recent sales {debugDetail.AveragePrice.Value.RecentHistoryCount}");
-      parts.Add($"newest sale {FormatLatestSaleAge(debugDetail.AveragePrice.Value.LatestSaleAt, now)}");
+      parts.Add($"recent sales {debugDetail.SaleReference.Value.RecentHistoryCount}");
+      parts.Add($"newest sale {FormatLatestSaleAge(debugDetail.SaleReference.Value.LatestSaleAt, now)}");
     }
 
     return string.Join(", ", parts);
@@ -140,18 +140,18 @@ internal static class PricingMessageFormatter
       : $"listings {Math.Max(MinimumListingCount, debugDetail.ListingCount.Value)}";
   }
 
-  private static string FormatAveragePrice(PricingDebugDetail debugDetail)
+  private static string FormatSaleReference(PricingDebugDetail debugDetail)
   {
-    return debugDetail.AveragePrice is null
+    return debugDetail.SaleReference is null
       ? "unknown"
-      : $"{debugDetail.AveragePrice.Value.UnitPrice:N0}";
+      : $"{debugDetail.SaleReference.Value.MedianUnitPrice:N0}";
   }
 
   private static string FormatRecentSalesCount(PricingDebugDetail debugDetail)
   {
-    return debugDetail.AveragePrice is null
+    return debugDetail.SaleReference is null
       ? "0"
-      : debugDetail.AveragePrice.Value.RecentHistoryCount.ToString(CultureInfo.CurrentCulture);
+      : debugDetail.SaleReference.Value.RecentHistoryCount.ToString(CultureInfo.CurrentCulture);
   }
 
   private static int GetMinimumRecentSales(PricingDebugDetail debugDetail)
@@ -166,7 +166,7 @@ internal static class PricingMessageFormatter
 
   private static string PluralizeSaleCount(PricingDebugDetail debugDetail)
   {
-    return debugDetail.AveragePrice?.RecentHistoryCount == 1 ? "sale" : "sales";
+    return debugDetail.SaleReference?.RecentHistoryCount == 1 ? "sale" : "sales";
   }
 
   private static string FormatLatestSaleAge(DateTimeOffset? latestSaleAt, DateTimeOffset now)
