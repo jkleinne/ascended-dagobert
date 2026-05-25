@@ -285,12 +285,31 @@ namespace Dagobert
       }
     }
 
-    private async Task<SaleReference?> GetThinMarketSaleReferenceAsync(int requestVersion)
+    private Task<SaleReference?> GetThinMarketSaleReferenceAsync(int requestVersion)
+      => GetSaleReferenceAsync(
+        requestVersion,
+        "thin market",
+        Math.Clamp(Plugin.Configuration.ThinMarketMinRecentSales, 1, 20),
+        Math.Clamp(Plugin.Configuration.ThinMarketMaxSaleAgeDays, 1, 90));
+
+    private Task<SaleReference?> GetBaitGuardSaleReferenceAsync(int requestVersion)
+      => GetSaleReferenceAsync(
+        requestVersion,
+        "bait guard",
+        Math.Clamp(Plugin.Configuration.BaitGuardSaleReferenceMinRecentSales, 1, 20),
+        Math.Clamp(Plugin.Configuration.BaitGuardSaleReferenceMaxSaleAgeDays, 1, 90));
+
+    private async Task<SaleReference?> GetSaleReferenceAsync(
+      int requestVersion,
+      string requestSource,
+      int minRecentSales,
+      int maxSaleAgeDays)
     {
       if (!Plugin.PlayerState.IsLoaded || _currentItemId == 0)
       {
         Svc.Log.Debug(
-          "Skipping Universalis thin market sale reference request {RequestVersion}, player loaded {PlayerLoaded}, item {ItemId}",
+          "Skipping Universalis {RequestSource} sale reference request {RequestVersion}, player loaded {PlayerLoaded}, item {ItemId}",
+          requestSource,
           requestVersion,
           Plugin.PlayerState.IsLoaded,
           _currentItemId);
@@ -305,44 +324,8 @@ namespace Dagobert
           Plugin.PlayerState.HomeWorld.RowId,
           _currentItemId,
           _useHq,
-          Math.Clamp(Plugin.Configuration.ThinMarketMinRecentSales, 1, 20),
-          Math.Clamp(Plugin.Configuration.ThinMarketMaxSaleAgeDays, 1, 90),
-          DateTimeOffset.UtcNow,
-          requestCancellation.Token);
-      }
-      finally
-      {
-        if (_priceRequestState.IsCurrent(requestVersion))
-        {
-          requestCancellation.Dispose();
-          if (ReferenceEquals(_saleReferenceRequestCancellation, requestCancellation))
-            _saleReferenceRequestCancellation = null;
-        }
-      }
-    }
-
-    private async Task<SaleReference?> GetBaitGuardSaleReferenceAsync(int requestVersion)
-    {
-      if (!Plugin.PlayerState.IsLoaded || _currentItemId == 0)
-      {
-        Svc.Log.Debug(
-          "Skipping Universalis sale reference request {RequestVersion}, player loaded {PlayerLoaded}, item {ItemId}",
-          requestVersion,
-          Plugin.PlayerState.IsLoaded,
-          _currentItemId);
-        return null;
-      }
-
-      var requestCancellation = new CancellationTokenSource();
-      _saleReferenceRequestCancellation = requestCancellation;
-      try
-      {
-        return await _saleReferenceProvider.GetSaleReferenceAsync(
-          Plugin.PlayerState.HomeWorld.RowId,
-          _currentItemId,
-          _useHq,
-          Math.Clamp(Plugin.Configuration.BaitGuardSaleReferenceMinRecentSales, 1, 20),
-          Math.Clamp(Plugin.Configuration.BaitGuardSaleReferenceMaxSaleAgeDays, 1, 90),
+          minRecentSales,
+          maxSaleAgeDays,
           DateTimeOffset.UtcNow,
           requestCancellation.Token);
       }
