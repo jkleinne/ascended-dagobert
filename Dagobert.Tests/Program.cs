@@ -15,7 +15,7 @@ internal static class Program
     {
       ("NQ average uses only NQ history rows", NqAverageUsesOnlyNqHistoryRows),
       ("HQ average uses only HQ history rows", HqAverageUsesOnlyHqHistoryRows),
-      ("Thin market average requests stable recent history sample", ThinMarketAverageRequestsStableRecentHistorySample),
+      ("Average price requests stable recent history sample", AveragePriceRequestsStableRecentHistorySample),
       ("Average skips invalid timestamp history rows", AverageSkipsInvalidTimestampHistoryRows),
       ("No price reason explains bait guard skip", NoPriceReasonExplainsBaitGuardSkip),
       ("No price reason explains every thin market skip reason", NoPriceReasonExplainsEveryThinMarketSkipReason),
@@ -34,9 +34,14 @@ internal static class Program
       ("Bait guard accepts below-floor cluster with enough quantity", BaitGuardAcceptsBelowFloorClusterWithEnoughQuantity),
       ("Bait guard applies gap promotion before sale reference", BaitGuardAppliesGapPromotionBeforeSaleReference),
       ("NQ sale reference uses lower-middle matching sale median", NqSaleReferenceUsesLowerMiddleMatchingSaleMedian),
+      ("Sale reference median ignores one extreme high sale", SaleReferenceMedianIgnoresOneExtremeHighSale),
       ("Sale reference rejects too few matching sales", SaleReferenceRejectsTooFewMatchingSales),
       ("Sale reference rejects stale newest matching sale", SaleReferenceRejectsStaleNewestMatchingSale),
       ("Sale reference skips invalid sale rows", SaleReferenceSkipsInvalidSaleRows),
+      ("Thin market holds own price outside sale reference tolerance", ThinMarketHoldsOwnPriceOutsideSaleReferenceTolerance),
+      ("Thin market moves own price within sale reference tolerance", ThinMarketMovesOwnPriceWithinSaleReferenceTolerance),
+      ("Thin market uses sale reference for empty board", ThinMarketUsesSaleReferenceForEmptyBoard),
+      ("Thin market undercuts floor within sale reference tolerance", ThinMarketUndercutsFloorWithinSaleReferenceTolerance),
       ("Post pinch workflow starts with prepare before wait and set", PostPinchWorkflowStartsWithPrepareBeforeWaitAndSet),
       ("Post pinch workflow forces fresh compare on sell addon setup", PostPinchWorkflowForcesFreshCompareOnSellAddonSetup),
       ("Post pinch workflow ignores sell addon setup with busy task manager", PostPinchWorkflowIgnoresSellAddonSetupWithBusyTaskManager),
@@ -147,7 +152,7 @@ internal static class Program
     AssertEqual(DateTimeOffset.FromUnixTimeSeconds(newestHqSale), price.LatestSaleAt, "HQ latest sale");
   }
 
-  private static async Task ThinMarketAverageRequestsStableRecentHistorySample()
+  private static async Task AveragePriceRequestsStableRecentHistorySample()
   {
     const long newestNqSale = 1778600000;
     const long olderNqSale = 1778500000;
@@ -265,7 +270,7 @@ internal static class Program
         {
           ThinMarketReason = ThinMarketPricingReason.FallbackDisabled
         },
-        "thin market skipped because average fallback is disabled"),
+        "thin market skipped because sale reference fallback is disabled"),
       (
         ThinMarketPricingReason.TooManyListings,
         new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
@@ -275,61 +280,64 @@ internal static class Program
         },
         "thin market skipped because listing count is above the thin market limit"),
       (
-        ThinMarketPricingReason.AverageMissingOrZero,
+        ThinMarketPricingReason.SaleReferenceMissingOrZero,
         new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
         {
-          ThinMarketReason = ThinMarketPricingReason.AverageMissingOrZero
+          ThinMarketReason = ThinMarketPricingReason.SaleReferenceMissingOrZero
         },
-        "thin market skipped because Universalis returned no positive average"),
+        "thin market skipped because Universalis returned no usable sale reference"),
       (
         ThinMarketPricingReason.NotEnoughRecentSales,
         new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
         {
           ThinMarketReason = ThinMarketPricingReason.NotEnoughRecentSales,
-          AveragePrice = new ThinMarketAveragePrice(5000, 1, now.AddHours(-2)),
+          SaleReference = new SaleReference(5000, 1, now.AddHours(-2)),
           MinRecentSales = 3
         },
         "thin market skipped because Universalis returned 1 recent sale, minimum is 3"),
-      (
-        ThinMarketPricingReason.LatestSaleMissing,
-        new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
-        {
-          ThinMarketReason = ThinMarketPricingReason.LatestSaleMissing
-        },
-        "thin market skipped because Universalis did not return a timestamped recent sale"),
       (
         ThinMarketPricingReason.LatestSaleTooOld,
         new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
         {
           ThinMarketReason = ThinMarketPricingReason.LatestSaleTooOld,
-          AveragePrice = new ThinMarketAveragePrice(5000, 3, now.AddDays(-31)),
+          SaleReference = new SaleReference(5000, 3, now.AddDays(-31)),
           MaxSaleAgeDays = 30
         },
         "thin market skipped because newest Universalis sale is 31 days ago and max age is 30 days"),
       (
-        ThinMarketPricingReason.EmptyBoardUseAverage,
+        ThinMarketPricingReason.EmptyBoardUseReference,
         new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
         {
-          ThinMarketReason = ThinMarketPricingReason.EmptyBoardUseAverage
+          ThinMarketReason = ThinMarketPricingReason.EmptyBoardUseReference
         },
-        "thin market skipped because thin market selected an average for an empty board, but the result was not available to set"),
+        "thin market skipped because thin market selected a sale reference for an empty board, but the result was not available to set"),
       (
-        ThinMarketPricingReason.FloorMissing,
+        ThinMarketPricingReason.OwnPriceOutsideTolerance,
         new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
         {
-          ThinMarketReason = ThinMarketPricingReason.FloorMissing
+          ThinMarketReason = ThinMarketPricingReason.OwnPriceOutsideTolerance,
+          OwnLowestPrice = 19980,
+          SaleReference = new SaleReference(23000, 3, now.AddHours(-2)),
+          TolerancePercent = 10.0f
         },
-        "thin market skipped because there is no competitor floor"),
+        $"thin market skipped because own price {FormatExpectedGil(19980)} gil is outside 10% tolerance of Universalis sale reference {FormatExpectedGil(23000)} gil"),
       (
         ThinMarketPricingReason.FloorOutsideTolerance,
         new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
         {
           ThinMarketReason = ThinMarketPricingReason.FloorOutsideTolerance,
           FloorPrice = 10000,
-          AveragePrice = new ThinMarketAveragePrice(5000, 3, now.AddHours(-2)),
+          SaleReference = new SaleReference(5000, 3, now.AddHours(-2)),
           TolerancePercent = 40.0f
         },
-        $"thin market skipped because floor {FormatExpectedGil(10000)} gil is outside 40% tolerance of Universalis average {FormatExpectedGil(5000)} gil"),
+        $"thin market skipped because floor {FormatExpectedGil(10000)} gil is outside 40% tolerance of Universalis sale reference {FormatExpectedGil(5000)} gil"),
+      (
+        ThinMarketPricingReason.OwnPriceWithinTolerance,
+        new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
+        {
+          ThinMarketReason = ThinMarketPricingReason.OwnPriceWithinTolerance
+        },
+        "thin market skipped because thin market found an own price near the sale reference, but the result was not available to set"),
       (
         ThinMarketPricingReason.FloorWithinTolerance,
         new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
@@ -365,9 +373,9 @@ internal static class Program
         new PricingDebugDetail(PricingDebugReason.UndercutCompetitor),
         "a price was calculated but was not available to set"),
       (
-        PricingDebugReason.ThinMarketUseAverage,
-        new PricingDebugDetail(PricingDebugReason.ThinMarketUseAverage),
-        "thin market selected a Universalis average, but the result was not available to set"),
+        PricingDebugReason.ThinMarketUseReference,
+        new PricingDebugDetail(PricingDebugReason.ThinMarketUseReference),
+        "thin market selected a Universalis sale reference, but the result was not available to set"),
       (
         PricingDebugReason.ThinMarketUndercutFloor,
         new PricingDebugDetail(PricingDebugReason.ThinMarketUndercutFloor),
@@ -440,7 +448,7 @@ internal static class Program
       ListingCount = 2,
       FloorPrice = 10000,
       OwnLowestPrice = 12000,
-      AveragePrice = new ThinMarketAveragePrice(5000, 1, FixedPricingNow().AddHours(-2)),
+      SaleReference = new SaleReference(5000, 1, FixedPricingNow().AddHours(-2)),
       MinRecentSales = 3,
       MaxSaleAgeDays = 30,
       TolerancePercent = 40.0f
@@ -462,7 +470,7 @@ internal static class Program
     var detail = new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
     {
       ThinMarketReason = ThinMarketPricingReason.LatestSaleTooOld,
-      AveragePrice = new ThinMarketAveragePrice(5000, 3, FixedPricingNow().AddDays(-31)),
+      SaleReference = new SaleReference(5000, 3, FixedPricingNow().AddDays(-31)),
       MaxSaleAgeDays = 30
     };
 
@@ -497,7 +505,7 @@ internal static class Program
       var detail = new PricingDebugDetail(PricingDebugReason.ThinMarketSkip)
       {
         ThinMarketReason = ThinMarketPricingReason.LatestSaleTooOld,
-        AveragePrice = new ThinMarketAveragePrice(5000, 3, testCase.LatestSaleAt),
+        SaleReference = new SaleReference(5000, 3, testCase.LatestSaleAt),
         MaxSaleAgeDays = 30
       };
 
@@ -603,6 +611,30 @@ internal static class Program
     AssertEqual<SaleReference?>(null, saleReference, "too few sale reference");
   }
 
+  private static async Task SaleReferenceMedianIgnoresOneExtremeHighSale()
+  {
+    var now = DateTimeOffset.FromUnixTimeSeconds(1778600000);
+    var provider = CreateProvider(
+      $$"""
+      {
+        "averagePriceNQ": 1000,
+        "recentHistory": [
+          { "hq": false, "pricePerUnit": 20000, "timestamp": {{now.ToUnixTimeSeconds()}} },
+          { "hq": false, "pricePerUnit": 19980, "timestamp": {{now.AddHours(-1).ToUnixTimeSeconds()}} },
+          { "hq": false, "pricePerUnit": 20050, "timestamp": {{now.AddHours(-2).ToUnixTimeSeconds()}} },
+          { "hq": false, "pricePerUnit": 20000000, "timestamp": {{now.AddHours(-3).ToUnixTimeSeconds()}} }
+        ]
+      }
+      """);
+
+    var saleReference = await provider.GetRecentSaleReferenceAsync(34, 3920, false, 4, 30, now, CancellationToken.None);
+
+    var reference = saleReference ?? throw new InvalidOperationException("expected a sale reference with an outlier");
+    AssertEqual((uint)20000, reference.MedianUnitPrice, "sale median with high outlier");
+    AssertEqual(4, reference.RecentHistoryCount, "sale count with high outlier");
+    AssertEqual(now, reference.LatestSaleAt, "latest sale with high outlier");
+  }
+
   private static async Task SaleReferenceRejectsStaleNewestMatchingSale()
   {
     var now = DateTimeOffset.FromUnixTimeSeconds(1778600000);
@@ -648,6 +680,74 @@ internal static class Program
     AssertEqual((uint)200, reference.MedianUnitPrice, "sale median with invalid rows");
     AssertEqual(3, reference.RecentHistoryCount, "valid sale count");
     AssertEqual(now, reference.LatestSaleAt, "latest valid sale");
+  }
+
+  private static Task ThinMarketHoldsOwnPriceOutsideSaleReferenceTolerance()
+  {
+    var now = FixedPricingNow();
+    var decision = ThinMarketPricePolicy.Decide(
+      0,
+      null,
+      19980,
+      new SaleReference(20000000, 3, now),
+      DefaultThinMarketOptions(),
+      now);
+
+    AssertEqual(ThinMarketPricingAction.Skip, decision.Action, "own outlier action");
+    AssertEqual(ThinMarketPricingReason.OwnPriceOutsideTolerance, decision.Reason, "own outlier reason");
+    AssertEqual((uint)0, decision.ReferencePrice, "own outlier reference price");
+    return Task.CompletedTask;
+  }
+
+  private static Task ThinMarketMovesOwnPriceWithinSaleReferenceTolerance()
+  {
+    var now = FixedPricingNow();
+    var decision = ThinMarketPricePolicy.Decide(
+      0,
+      null,
+      19980,
+      new SaleReference(23000, 3, now),
+      DefaultThinMarketOptions(),
+      now);
+
+    AssertEqual(ThinMarketPricingAction.UseReference, decision.Action, "own nearby action");
+    AssertEqual(ThinMarketPricingReason.OwnPriceWithinTolerance, decision.Reason, "own nearby reason");
+    AssertEqual((uint)23000, decision.ReferencePrice, "own nearby reference price");
+    return Task.CompletedTask;
+  }
+
+  private static Task ThinMarketUsesSaleReferenceForEmptyBoard()
+  {
+    var now = FixedPricingNow();
+    var decision = ThinMarketPricePolicy.Decide(
+      0,
+      null,
+      null,
+      new SaleReference(23000, 3, now),
+      DefaultThinMarketOptions(),
+      now);
+
+    AssertEqual(ThinMarketPricingAction.UseReference, decision.Action, "empty board action");
+    AssertEqual(ThinMarketPricingReason.EmptyBoardUseReference, decision.Reason, "empty board reason");
+    AssertEqual((uint)23000, decision.ReferencePrice, "empty board reference price");
+    return Task.CompletedTask;
+  }
+
+  private static Task ThinMarketUndercutsFloorWithinSaleReferenceTolerance()
+  {
+    var now = FixedPricingNow();
+    var decision = ThinMarketPricePolicy.Decide(
+      1,
+      21000,
+      25000,
+      new SaleReference(23000, 3, now),
+      DefaultThinMarketOptions(),
+      now);
+
+    AssertEqual(ThinMarketPricingAction.UndercutFloor, decision.Action, "floor nearby action");
+    AssertEqual(ThinMarketPricingReason.FloorWithinTolerance, decision.Reason, "floor nearby reason");
+    AssertEqual((uint)21000, decision.ReferencePrice, "floor nearby reference price");
+    return Task.CompletedTask;
   }
 
   private static Task PostPinchWorkflowStartsWithPrepareBeforeWaitAndSet()
@@ -1340,6 +1440,13 @@ internal static class Program
     LowClusterListings: 3,
     LowClusterQuantity: 20,
     LowClusterPriceTolerancePercent: 5.0f);
+
+  private static ThinMarketPricingOptions DefaultThinMarketOptions() => new(
+    Enabled: true,
+    MaxListings: 2,
+    MinRecentSales: 3,
+    MaxSaleAgeDays: 30,
+    TolerancePercent: 40.0f);
 
   private static List<TestMarketBoardItemListing> CreateListings(
     params (uint PricePerUnit, uint Quantity)[] listings)

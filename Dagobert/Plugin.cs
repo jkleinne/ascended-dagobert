@@ -65,7 +65,6 @@ public sealed class Plugin : IDalamudPlugin
       new AutoRetainerSuppressionCoordinator(new AutoRetainerIPC());
     _autoPinch = new AutoPinch(
       universalisPriceProvider,
-      universalisPriceProvider,
       _marketBoardRequestTracker,
       autoRetainerSuppressionCoordinator);
     WindowSystem.AddWindow(_autoPinch);

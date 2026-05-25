@@ -8,7 +8,7 @@ internal enum PricingDebugReason
   NoCredibleListing,
   OwnPriceAlreadyLowest,
   UndercutCompetitor,
-  ThinMarketUseAverage,
+  ThinMarketUseReference,
   ThinMarketUndercutFloor,
   ThinMarketSkip,
   CachedPrice
@@ -18,12 +18,12 @@ internal enum ThinMarketPricingReason
 {
   FallbackDisabled,
   TooManyListings,
-  AverageMissingOrZero,
+  SaleReferenceMissingOrZero,
   NotEnoughRecentSales,
-  LatestSaleMissing,
   LatestSaleTooOld,
-  EmptyBoardUseAverage,
-  FloorMissing,
+  EmptyBoardUseReference,
+  OwnPriceOutsideTolerance,
+  OwnPriceWithinTolerance,
   FloorOutsideTolerance,
   FloorWithinTolerance
 }
@@ -40,7 +40,7 @@ internal sealed record PricingDebugDetail(PricingDebugReason Reason)
 
   public int? CompetitorPrice { get; init; }
 
-  public ThinMarketAveragePrice? AveragePrice { get; init; }
+  public SaleReference? SaleReference { get; init; }
 
   public ThinMarketPricingReason? ThinMarketReason { get; init; }
 

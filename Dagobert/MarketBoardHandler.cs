@@ -15,7 +15,6 @@ namespace Dagobert
 {
   internal sealed class MarketBoardHandler : IDisposable
   {
-    private readonly IAverageSalePriceProvider _averageSalePriceProvider;
     private readonly IRecentSaleReferenceProvider _saleReferenceProvider;
     private readonly MarketBoardRequestTracker _marketBoardRequestTracker;
     private readonly MarketBoardPriceRequestState _priceRequestState = new();
@@ -27,7 +26,7 @@ namespace Dagobert
     private int _lastRequestId = -1;
     private int _thinFallbackRequestVersion = -1;
     private uint? _expectedListings;
-    private CancellationTokenSource? _averagePriceRequestCancellation;
+    private CancellationTokenSource? _saleReferenceRequestCancellation;
 
     private int _bufferedRequestId = -1;
     private readonly List<IMarketBoardItemListing> _bufferedListings = new();
@@ -37,11 +36,9 @@ namespace Dagobert
     public event EventHandler<NewPriceEventArgs>? NewPriceReceived;
 
     public MarketBoardHandler(
-      IAverageSalePriceProvider averageSalePriceProvider,
       IRecentSaleReferenceProvider saleReferenceProvider,
       MarketBoardRequestTracker marketBoardRequestTracker)
     {
-      _averageSalePriceProvider = averageSalePriceProvider;
       _saleReferenceProvider = saleReferenceProvider;
       _marketBoardRequestTracker = marketBoardRequestTracker;
       _items = Svc.Data.GetExcelSheet<Item>();
@@ -55,8 +52,8 @@ namespace Dagobert
 
     public void Dispose()
     {
-      _averagePriceRequestCancellation?.Cancel();
-      _averagePriceRequestCancellation?.Dispose();
+      _saleReferenceRequestCancellation?.Cancel();
+      _saleReferenceRequestCancellation?.Dispose();
       Plugin.MarketBoard.OfferingsReceived -= MarketBoardOnOfferingsReceived;
       _marketBoardRequestTracker.RequestStarted -= MarketBoardRequestTrackerOnRequestStarted;
       Plugin.AddonLifecycle.UnregisterListener(AddonEvent.PostSetup, "RetainerSell", AddonRetainerSellPostSetup);
@@ -65,9 +62,9 @@ namespace Dagobert
 
     public void PrepareForPriceRequest()
     {
-      _averagePriceRequestCancellation?.Cancel();
-      _averagePriceRequestCancellation?.Dispose();
-      _averagePriceRequestCancellation = null;
+      _saleReferenceRequestCancellation?.Cancel();
+      _saleReferenceRequestCancellation?.Dispose();
+      _saleReferenceRequestCancellation = null;
 
       _useHq = Plugin.Configuration.HQ && _itemHq;
       _expectedListings = null;
@@ -166,13 +163,13 @@ namespace Dagobert
         requestVersion,
         _currentItemId,
         hqEligible.Count,
-        thinMarket.ListingCount,
+        thinMarket.ComparableListingCount,
         thinMarket.FloorPrice,
         thinMarket.OwnLowestPrice);
       if (_thinFallbackRequestVersion == requestVersion && _isPricingDecisionPending)
         return;
 
-      if (thinMarket.ListingCount <= Math.Max(0, Plugin.Configuration.ThinMarketMaxListings))
+      if (thinMarket.ComparableListingCount <= Math.Max(0, Plugin.Configuration.ThinMarketMaxListings))
       {
         var thinResult = await DecideThinMarketPriceAsync(thinMarket, requestVersion);
         if (!_priceRequestState.IsCurrent(requestVersion))
@@ -184,7 +181,7 @@ namespace Dagobert
           return;
         }
 
-        if (!Plugin.Configuration.EnableThinMarketAverageFallback && thinMarket.ListingCount > 0)
+        if (!Plugin.Configuration.EnableThinMarketAverageFallback && thinMarket.ComparableListingCount > 0)
         {
           FinishPriceRequest(NoPrice(BuildThinMarketDebug(
             ThinMarketPricingAction.Skip,
@@ -256,7 +253,7 @@ namespace Dagobert
       if (!options.Enabled)
         return null;
 
-      if (thinMarket.ListingCount > Math.Max(0, options.MaxListings))
+      if (thinMarket.ComparableListingCount > Math.Max(0, options.MaxListings))
         return null;
 
       if (_thinFallbackRequestVersion == requestVersion)
@@ -267,18 +264,19 @@ namespace Dagobert
 
       try
       {
-        var averagePrice = await GetAverageSalePriceAsync(requestVersion);
+        var saleReference = await GetThinMarketSaleReferenceAsync(requestVersion);
         if (!_priceRequestState.IsCurrent(requestVersion))
           return null;
 
         var decision = ThinMarketPricePolicy.Decide(
-          thinMarket.ListingCount,
+          thinMarket.ComparableListingCount,
           thinMarket.FloorPrice,
-          averagePrice,
+          thinMarket.OwnLowestPrice,
+          saleReference,
           options,
           DateTimeOffset.UtcNow);
 
-        return ApplyThinMarketDecision(decision, thinMarket, averagePrice, options);
+        return ApplyThinMarketDecision(decision, thinMarket, saleReference, options);
       }
       finally
       {
@@ -287,39 +285,43 @@ namespace Dagobert
       }
     }
 
-    private async Task<ThinMarketAveragePrice?> GetAverageSalePriceAsync(int requestVersion)
+    private async Task<SaleReference?> GetThinMarketSaleReferenceAsync(int requestVersion)
     {
       if (!Plugin.PlayerState.IsLoaded || _currentItemId == 0)
       {
         Svc.Log.Debug(
-          "Skipping Universalis average price request {RequestVersion}, player loaded {PlayerLoaded}, item {ItemId}",
+          "Skipping Universalis thin market sale reference request {RequestVersion}, player loaded {PlayerLoaded}, item {ItemId}",
           requestVersion,
           Plugin.PlayerState.IsLoaded,
           _currentItemId);
         return null;
       }
 
-      _averagePriceRequestCancellation = new CancellationTokenSource();
+      var requestCancellation = new CancellationTokenSource();
+      _saleReferenceRequestCancellation = requestCancellation;
       try
       {
-        return await _averageSalePriceProvider.GetAverageSalePriceAsync(
+        return await _saleReferenceProvider.GetRecentSaleReferenceAsync(
           Plugin.PlayerState.HomeWorld.RowId,
           _currentItemId,
           _useHq,
-          Plugin.Configuration.ThinMarketMinRecentSales,
-          _averagePriceRequestCancellation.Token);
+          Math.Clamp(Plugin.Configuration.ThinMarketMinRecentSales, 1, 20),
+          Math.Clamp(Plugin.Configuration.ThinMarketMaxSaleAgeDays, 1, 90),
+          DateTimeOffset.UtcNow,
+          requestCancellation.Token);
       }
       finally
       {
         if (_priceRequestState.IsCurrent(requestVersion))
         {
-          _averagePriceRequestCancellation.Dispose();
-          _averagePriceRequestCancellation = null;
+          requestCancellation.Dispose();
+          if (ReferenceEquals(_saleReferenceRequestCancellation, requestCancellation))
+            _saleReferenceRequestCancellation = null;
         }
       }
     }
 
-    private async Task<SaleReference?> GetRecentSaleReferenceAsync(int requestVersion)
+    private async Task<SaleReference?> GetBaitGuardSaleReferenceAsync(int requestVersion)
     {
       if (!Plugin.PlayerState.IsLoaded || _currentItemId == 0)
       {
@@ -331,7 +333,8 @@ namespace Dagobert
         return null;
       }
 
-      _averagePriceRequestCancellation = new CancellationTokenSource();
+      var requestCancellation = new CancellationTokenSource();
+      _saleReferenceRequestCancellation = requestCancellation;
       try
       {
         return await _saleReferenceProvider.GetRecentSaleReferenceAsync(
@@ -341,14 +344,15 @@ namespace Dagobert
           Math.Clamp(Plugin.Configuration.BaitGuardSaleReferenceMinRecentSales, 1, 20),
           Math.Clamp(Plugin.Configuration.BaitGuardSaleReferenceMaxSaleAgeDays, 1, 90),
           DateTimeOffset.UtcNow,
-          _averagePriceRequestCancellation.Token);
+          requestCancellation.Token);
       }
       finally
       {
         if (_priceRequestState.IsCurrent(requestVersion))
         {
-          _averagePriceRequestCancellation.Dispose();
-          _averagePriceRequestCancellation = null;
+          requestCancellation.Dispose();
+          if (ReferenceEquals(_saleReferenceRequestCancellation, requestCancellation))
+            _saleReferenceRequestCancellation = null;
         }
       }
     }
@@ -356,19 +360,19 @@ namespace Dagobert
     private static PricingDecisionResult ApplyThinMarketDecision(
       ThinMarketPricingDecision decision,
       ThinMarketListingContext thinMarket,
-      ThinMarketAveragePrice? averagePrice,
+      SaleReference? saleReference,
       ThinMarketPricingOptions options)
     {
       var price = decision.Action switch
       {
-        ThinMarketPricingAction.UseAverage => (int)decision.ReferencePrice,
+        ThinMarketPricingAction.UseReference => (int)decision.ReferencePrice,
         ThinMarketPricingAction.UndercutFloor => PriceAgainstFloor(decision.ReferencePrice, thinMarket.OwnLowestPrice),
         _ => -1
       };
 
       var reason = decision.Action switch
       {
-        ThinMarketPricingAction.UseAverage => PricingDebugReason.ThinMarketUseAverage,
+        ThinMarketPricingAction.UseReference => PricingDebugReason.ThinMarketUseReference,
         ThinMarketPricingAction.UndercutFloor => PricingDebugReason.ThinMarketUndercutFloor,
         _ => PricingDebugReason.ThinMarketSkip
       };
@@ -379,7 +383,7 @@ namespace Dagobert
           decision.Action,
           decision.Reason,
           thinMarket,
-          averagePrice,
+          saleReference,
           options,
           price) with
         {
@@ -407,7 +411,7 @@ namespace Dagobert
 
         SaleReference? selfSaleReference = null;
         if (opts.Enabled)
-          selfSaleReference = await GetRecentSaleReferenceAsync(requestVersion);
+          selfSaleReference = await GetBaitGuardSaleReferenceAsync(requestVersion);
 
         if (!_priceRequestState.IsCurrent(requestVersion))
           return null;
@@ -466,7 +470,7 @@ namespace Dagobert
 
       SaleReference? competitorSaleReference = null;
       if (opts.Enabled)
-        competitorSaleReference = await GetRecentSaleReferenceAsync(requestVersion);
+        competitorSaleReference = await GetBaitGuardSaleReferenceAsync(requestVersion);
 
       if (!_priceRequestState.IsCurrent(requestVersion))
         return null;
@@ -526,24 +530,24 @@ namespace Dagobert
       ThinMarketPricingAction action,
       ThinMarketPricingReason thinMarketReason,
       ThinMarketListingContext thinMarket,
-      ThinMarketAveragePrice? averagePrice,
+      SaleReference? saleReference,
       ThinMarketPricingOptions options,
       int selectedPrice)
     {
       var reason = action switch
       {
-        ThinMarketPricingAction.UseAverage => PricingDebugReason.ThinMarketUseAverage,
+        ThinMarketPricingAction.UseReference => PricingDebugReason.ThinMarketUseReference,
         ThinMarketPricingAction.UndercutFloor => PricingDebugReason.ThinMarketUndercutFloor,
         _ => PricingDebugReason.ThinMarketSkip
       };
 
       return new PricingDebugDetail(reason)
       {
-        ListingCount = thinMarket.ListingCount,
+        ListingCount = thinMarket.ComparableListingCount,
         FloorPrice = thinMarket.FloorPrice is null ? null : (int)thinMarket.FloorPrice.Value,
         OwnLowestPrice = thinMarket.OwnLowestPrice is null ? null : (int)thinMarket.OwnLowestPrice.Value,
         SelectedPrice = selectedPrice > 0 ? selectedPrice : null,
-        AveragePrice = averagePrice,
+        SaleReference = saleReference,
         ThinMarketReason = thinMarketReason,
         MinRecentSales = options.MinRecentSales,
         MaxSaleAgeDays = options.MaxSaleAgeDays,
@@ -705,7 +709,7 @@ namespace Dagobert
     private static bool IsOwnRetainer(ulong retainerId) => Plugin.Configuration.SeenRetainers.Contains(retainerId);
 
     private readonly record struct ThinMarketListingContext(
-      int ListingCount,
+      int ComparableListingCount,
       uint? FloorPrice,
       uint? OwnLowestPrice);
   }

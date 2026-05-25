@@ -5,7 +5,7 @@ namespace Dagobert;
 internal enum ThinMarketPricingAction
 {
   Skip,
-  UseAverage,
+  UseReference,
   UndercutFloor
 }
 
@@ -29,13 +29,14 @@ internal readonly record struct ThinMarketPricingOptions(
 internal static class ThinMarketPricePolicy
 {
   public static ThinMarketPricingDecision Decide(
-    int listingCount,
+    int comparableListingCount,
     uint? floorPrice,
-    ThinMarketAveragePrice? averagePrice,
+    uint? ownLowestPrice,
+    SaleReference? saleReference,
     ThinMarketPricingOptions options,
     DateTimeOffset now)
   {
-    if (!options.Enabled || listingCount > Math.Max(0, options.MaxListings))
+    if (!options.Enabled || comparableListingCount > Math.Max(0, options.MaxListings))
     {
       var reason = options.Enabled
         ? ThinMarketPricingReason.TooManyListings
@@ -43,23 +44,31 @@ internal static class ThinMarketPricePolicy
       return new ThinMarketPricingDecision(ThinMarketPricingAction.Skip, 0, reason);
     }
 
-    if (!IsAveragePriceCredible(averagePrice, options, now, out var credibilityReason))
+    if (!IsSaleReferenceCredible(saleReference, options, now, out var credibilityReason))
       return new ThinMarketPricingDecision(ThinMarketPricingAction.Skip, 0, credibilityReason);
 
-    var average = averagePrice.GetValueOrDefault().UnitPrice;
-    if (listingCount == 0)
+    var reference = saleReference.GetValueOrDefault().MedianUnitPrice;
+    if (floorPrice is null && ownLowestPrice is null)
       return new ThinMarketPricingDecision(
-        ThinMarketPricingAction.UseAverage,
-        average,
-        ThinMarketPricingReason.EmptyBoardUseAverage);
+        ThinMarketPricingAction.UseReference,
+        reference,
+        ThinMarketPricingReason.EmptyBoardUseReference);
 
     if (floorPrice is null)
+    {
+      if (IsWithinTolerance(ownLowestPrice.GetValueOrDefault(), reference, options.TolerancePercent))
+        return new ThinMarketPricingDecision(
+          ThinMarketPricingAction.UseReference,
+          reference,
+          ThinMarketPricingReason.OwnPriceWithinTolerance);
+
       return new ThinMarketPricingDecision(
         ThinMarketPricingAction.Skip,
         0,
-        ThinMarketPricingReason.FloorMissing);
+        ThinMarketPricingReason.OwnPriceOutsideTolerance);
+    }
 
-    if (!IsWithinTolerance(floorPrice.Value, average, options.TolerancePercent))
+    if (!IsWithinTolerance(floorPrice.Value, reference, options.TolerancePercent))
       return new ThinMarketPricingDecision(
         ThinMarketPricingAction.Skip,
         0,
@@ -71,32 +80,26 @@ internal static class ThinMarketPricePolicy
       ThinMarketPricingReason.FloorWithinTolerance);
   }
 
-  private static bool IsAveragePriceCredible(
-    ThinMarketAveragePrice? averagePrice,
+  private static bool IsSaleReferenceCredible(
+    SaleReference? saleReference,
     ThinMarketPricingOptions options,
     DateTimeOffset now,
     out ThinMarketPricingReason reason)
   {
-    if (averagePrice is null || averagePrice.Value.UnitPrice == 0)
+    if (saleReference is null || saleReference.Value.MedianUnitPrice == 0)
     {
-      reason = ThinMarketPricingReason.AverageMissingOrZero;
+      reason = ThinMarketPricingReason.SaleReferenceMissingOrZero;
       return false;
     }
 
-    if (averagePrice.Value.RecentHistoryCount < Math.Max(1, options.MinRecentSales))
+    if (saleReference.Value.RecentHistoryCount < Math.Max(1, options.MinRecentSales))
     {
       reason = ThinMarketPricingReason.NotEnoughRecentSales;
       return false;
     }
 
-    if (averagePrice.Value.LatestSaleAt is null)
-    {
-      reason = ThinMarketPricingReason.LatestSaleMissing;
-      return false;
-    }
-
     var maxAge = TimeSpan.FromDays(Math.Max(1, options.MaxSaleAgeDays));
-    if (averagePrice.Value.LatestSaleAt.Value < now - maxAge)
+    if (saleReference.Value.LatestSaleAt < now - maxAge)
     {
       reason = ThinMarketPricingReason.LatestSaleTooOld;
       return false;
@@ -106,13 +109,13 @@ internal static class ThinMarketPricePolicy
     return true;
   }
 
-  private static bool IsWithinTolerance(uint floorPrice, uint averagePrice, float tolerancePercent)
+  private static bool IsWithinTolerance(uint candidatePrice, uint referencePrice, float tolerancePercent)
   {
     var tolerance = (decimal)Math.Clamp(tolerancePercent, 0f, 1000f) / 100m;
-    var average = (decimal)averagePrice;
-    var floor = (decimal)floorPrice;
-    var lowerBound = average * (1m - tolerance);
-    var upperBound = average * (1m + tolerance);
-    return floor >= lowerBound && floor <= upperBound;
+    var reference = (decimal)referencePrice;
+    var candidate = (decimal)candidatePrice;
+    var lowerBound = reference * (1m - tolerance);
+    var upperBound = reference * (1m + tolerance);
+    return candidate >= lowerBound && candidate <= upperBound;
   }
 }
