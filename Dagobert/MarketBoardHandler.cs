@@ -15,7 +15,7 @@ namespace Dagobert
 {
   internal sealed class MarketBoardHandler : IDisposable
   {
-    private readonly IRecentSaleReferenceProvider _saleReferenceProvider;
+    private readonly ISaleReferenceProvider _saleReferenceProvider;
     private readonly MarketBoardRequestTracker _marketBoardRequestTracker;
     private readonly MarketBoardPriceRequestState _priceRequestState = new();
     private readonly Lumina.Excel.ExcelSheet<Item> _items;
@@ -36,7 +36,7 @@ namespace Dagobert
     public event EventHandler<NewPriceEventArgs>? NewPriceReceived;
 
     public MarketBoardHandler(
-      IRecentSaleReferenceProvider saleReferenceProvider,
+      ISaleReferenceProvider saleReferenceProvider,
       MarketBoardRequestTracker marketBoardRequestTracker)
     {
       _saleReferenceProvider = saleReferenceProvider;
@@ -181,7 +181,7 @@ namespace Dagobert
           return;
         }
 
-        if (!Plugin.Configuration.EnableThinMarketAverageFallback && thinMarket.ComparableListingCount > 0)
+        if (!Plugin.Configuration.EnableThinMarketSaleReferenceFallback && thinMarket.ComparableListingCount > 0)
         {
           FinishPriceRequest(NoPrice(BuildThinMarketDebug(
             ThinMarketPricingAction.Skip,
@@ -301,7 +301,7 @@ namespace Dagobert
       _saleReferenceRequestCancellation = requestCancellation;
       try
       {
-        return await _saleReferenceProvider.GetRecentSaleReferenceAsync(
+        return await _saleReferenceProvider.GetSaleReferenceAsync(
           Plugin.PlayerState.HomeWorld.RowId,
           _currentItemId,
           _useHq,
@@ -337,7 +337,7 @@ namespace Dagobert
       _saleReferenceRequestCancellation = requestCancellation;
       try
       {
-        return await _saleReferenceProvider.GetRecentSaleReferenceAsync(
+        return await _saleReferenceProvider.GetSaleReferenceAsync(
           Plugin.PlayerState.HomeWorld.RowId,
           _currentItemId,
           _useHq,
@@ -580,11 +580,11 @@ namespace Dagobert
       LowClusterPriceTolerancePercent: Math.Clamp(Plugin.Configuration.BaitGuardLowClusterPriceTolerancePercent, 0.0f, 25.0f));
 
     private static ThinMarketPricingOptions BuildThinMarketOptions() => new(
-      Enabled: Plugin.Configuration.EnableThinMarketAverageFallback,
+      Enabled: Plugin.Configuration.EnableThinMarketSaleReferenceFallback,
       MaxListings: Plugin.Configuration.ThinMarketMaxListings,
       MinRecentSales: Plugin.Configuration.ThinMarketMinRecentSales,
       MaxSaleAgeDays: Plugin.Configuration.ThinMarketMaxSaleAgeDays,
-      TolerancePercent: Plugin.Configuration.ThinMarketAverageTolerancePercent);
+      TolerancePercent: Plugin.Configuration.ThinMarketSaleReferenceTolerancePercent);
 
     private ThinMarketListingContext BuildThinMarketListingContext(List<int> hqEligible)
     {

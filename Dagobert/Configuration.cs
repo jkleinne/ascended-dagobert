@@ -1,5 +1,6 @@
 ﻿using Dalamud.Configuration;
 using Dalamud.Game.ClientState.Keys;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 
@@ -14,7 +15,7 @@ public enum UndercutMode
 [Serializable]
 public sealed class Configuration : IPluginConfiguration
 {
-  public int Version { get; set; } = 1;
+  public int Version { get; set; } = 2;
 
   public bool HQ { get; set; } = true;
 
@@ -64,7 +65,7 @@ public sealed class Configuration : IPluginConfiguration
 
   public int BaitGuardSaleReferenceMaxSaleAgeDays { get; set; } = 30;
 
-  public bool EnableThinMarketAverageFallback { get; set; } = true;
+  public bool EnableThinMarketSaleReferenceFallback { get; set; } = true;
 
   public int ThinMarketMaxListings { get; set; } = 2;
 
@@ -72,7 +73,13 @@ public sealed class Configuration : IPluginConfiguration
 
   public int ThinMarketMaxSaleAgeDays { get; set; } = 30;
 
-  public float ThinMarketAverageTolerancePercent { get; set; } = 40.0f;
+  public float ThinMarketSaleReferenceTolerancePercent { get; set; } = 40.0f;
+
+  [JsonProperty("EnableThinMarketAverageFallback")]
+  public bool? LegacyEnableThinMarketAverageFallback { get; set; }
+
+  [JsonProperty("ThinMarketAverageTolerancePercent")]
+  public float? LegacyThinMarketAverageTolerancePercent { get; set; }
 
   public bool ShowPriceAdjustmentsMessages { get; set; } = true;
 
@@ -111,6 +118,40 @@ public sealed class Configuration : IPluginConfiguration
   /// Used to display retainer selection even when the retainer list is not open.
   /// </summary>
   public List<string> LastKnownRetainerNames { get; set; } = [];
+
+  internal bool HasLegacyThinMarketSaleReferenceSettings =>
+    LegacyEnableThinMarketAverageFallback.HasValue ||
+    LegacyThinMarketAverageTolerancePercent.HasValue;
+
+  internal void MigrateThinMarketSaleReferenceSettings()
+  {
+    if (LegacyEnableThinMarketAverageFallback.HasValue)
+      EnableThinMarketSaleReferenceFallback = LegacyEnableThinMarketAverageFallback.Value;
+
+    if (LegacyThinMarketAverageTolerancePercent.HasValue)
+      ThinMarketSaleReferenceTolerancePercent = LegacyThinMarketAverageTolerancePercent.Value;
+
+    LegacyEnableThinMarketAverageFallback = null;
+    LegacyThinMarketAverageTolerancePercent = null;
+  }
+
+  /// <summary>
+  /// Keeps legacy thin market fallback fields readable for migration without writing them back to disk.
+  /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Performance",
+    "CA1822:Mark members as static",
+    Justification = "Json.NET discovers ShouldSerialize hooks as instance methods.")]
+  public bool ShouldSerializeLegacyEnableThinMarketAverageFallback() => false;
+
+  /// <summary>
+  /// Keeps legacy thin market tolerance fields readable for migration without writing them back to disk.
+  /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Performance",
+    "CA1822:Mark members as static",
+    Justification = "Json.NET discovers ShouldSerialize hooks as instance methods.")]
+  public bool ShouldSerializeLegacyThinMarketAverageTolerancePercent() => false;
 
   public void Save()
   {

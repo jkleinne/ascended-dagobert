@@ -59,7 +59,7 @@ public sealed class Plugin : IDalamudPlugin
 
     ECommonsMain.Init(PluginInterface, this);
     _universalisHttpClient = CreateUniversalisHttpClient();
-    var universalisPriceProvider = new UniversalisAveragePriceProvider(_universalisHttpClient, Log);
+    var universalisPriceProvider = new UniversalisPriceProvider(_universalisHttpClient, Log);
     _marketBoardRequestTracker = new MarketBoardRequestTracker(GameInteropProvider, Log);
     var autoRetainerSuppressionCoordinator =
       new AutoRetainerSuppressionCoordinator(new AutoRetainerIPC());
@@ -80,17 +80,27 @@ public sealed class Plugin : IDalamudPlugin
     ECommonsMain.Dispose();
   }
 
-  // Carries pre-v1 configs forward: UndercutAmount used to hold the percent value too,
-  // now lives in UndercutAmountPercentage so percent and gil don't collide.
+  // Carries saved configs across renamed settings without dropping existing user choices.
   private static void MigrateConfiguration(Configuration config)
   {
-    if (config.Version >= 1) return;
+    var shouldSave = false;
 
-    if (config.UndercutMode == UndercutMode.Percentage)
+    if (config.Version < 1 && config.UndercutMode == UndercutMode.Percentage)
+    {
       config.UndercutAmountPercentage = config.UndercutAmount;
+      config.Version = 1;
+      shouldSave = true;
+    }
 
-    config.Version = 1;
-    config.Save();
+    if (config.Version < 2 || config.HasLegacyThinMarketSaleReferenceSettings)
+    {
+      config.MigrateThinMarketSaleReferenceSettings();
+      config.Version = 2;
+      shouldSave = true;
+    }
+
+    if (shouldSave)
+      config.Save();
   }
 
   private void OnDagobertCommand(string command, string args)

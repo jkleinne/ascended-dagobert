@@ -14,11 +14,6 @@ internal readonly record struct ThinMarketPricingDecision(
   uint ReferencePrice,
   ThinMarketPricingReason Reason);
 
-internal readonly record struct ThinMarketAveragePrice(
-  uint UnitPrice,
-  int RecentHistoryCount,
-  DateTimeOffset? LatestSaleAt);
-
 internal readonly record struct ThinMarketPricingOptions(
   bool Enabled,
   int MaxListings,

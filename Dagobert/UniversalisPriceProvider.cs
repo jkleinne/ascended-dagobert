@@ -9,19 +9,9 @@ using System.Threading.Tasks;
 
 namespace Dagobert;
 
-internal interface IAverageSalePriceProvider
+internal interface ISaleReferenceProvider
 {
-  Task<ThinMarketAveragePrice?> GetAverageSalePriceAsync(
-    uint worldId,
-    uint itemId,
-    bool isHq,
-    int recentHistoryLimit,
-    CancellationToken cancellationToken);
-}
-
-internal interface IRecentSaleReferenceProvider
-{
-  Task<SaleReference?> GetRecentSaleReferenceAsync(
+  Task<SaleReference?> GetSaleReferenceAsync(
     uint worldId,
     uint itemId,
     bool isHq,
@@ -31,79 +21,17 @@ internal interface IRecentSaleReferenceProvider
     CancellationToken cancellationToken);
 }
 
-internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPluginLog log) :
-  IAverageSalePriceProvider,
-  IRecentSaleReferenceProvider
+internal sealed class UniversalisPriceProvider(HttpClient httpClient, IPluginLog log) :
+  ISaleReferenceProvider
 {
   private const string ListingsQueryValue = "0";
-  private const int DefaultRecentSaleReferenceEntries = 20;
-  private const int MinimumAveragePriceHistoryEntries = 20;
-  private const string AveragePriceNqField = "averagePriceNQ";
-  private const string AveragePriceHqField = "averagePriceHQ";
+  private const int DefaultSaleReferenceEntries = 20;
   private const string RecentHistoryField = "recentHistory";
   private const string HqField = "hq";
   private const string PricePerUnitField = "pricePerUnit";
   private const string TimestampField = "timestamp";
 
-  public async Task<ThinMarketAveragePrice?> GetAverageSalePriceAsync(
-    uint worldId,
-    uint itemId,
-    bool isHq,
-    int recentHistoryLimit,
-    CancellationToken cancellationToken)
-  {
-    var entries = Math.Max(MinimumAveragePriceHistoryEntries, recentHistoryLimit);
-    var requestUri = string.Format(
-      CultureInfo.InvariantCulture,
-      "{0}/{1}?listings={2}&entries={3}",
-      worldId,
-      itemId,
-      ListingsQueryValue,
-      entries);
-    log.Debug(
-      "Universalis average price request started for item {ItemId} on world {WorldId}, hq {IsHq}, entries {Entries}",
-      itemId,
-      worldId,
-      isHq,
-      entries);
-
-    try
-    {
-      using var response = await httpClient.GetAsync(requestUri, cancellationToken).ConfigureAwait(false);
-      if (!response.IsSuccessStatusCode)
-      {
-        log.Warning(
-          "Universalis average price request failed for item {ItemId} on world {WorldId}: {StatusCode}",
-          itemId,
-          worldId,
-          response.StatusCode);
-        return null;
-      }
-
-      await using var responseStream = await response.Content
-        .ReadAsStreamAsync(cancellationToken)
-        .ConfigureAwait(false);
-      using var document = await JsonDocument
-        .ParseAsync(responseStream, cancellationToken: cancellationToken)
-        .ConfigureAwait(false);
-
-      var averagePrice = ParseAveragePrice(document.RootElement, isHq);
-      LogAveragePriceResult(worldId, itemId, isHq, averagePrice);
-      return averagePrice;
-    }
-    catch (OperationCanceledException)
-    {
-      log.Warning("Universalis average price request timed out for item {ItemId} on world {WorldId}", itemId, worldId);
-      return null;
-    }
-    catch (Exception ex) when (ex is HttpRequestException or JsonException or NotSupportedException)
-    {
-      log.Warning(ex, "Universalis average price request failed for item {ItemId} on world {WorldId}", itemId, worldId);
-      return null;
-    }
-  }
-
-  public async Task<SaleReference?> GetRecentSaleReferenceAsync(
+  public async Task<SaleReference?> GetSaleReferenceAsync(
     uint worldId,
     uint itemId,
     bool isHq,
@@ -112,7 +40,7 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
     DateTimeOffset now,
     CancellationToken cancellationToken)
   {
-    var entries = Math.Max(DefaultRecentSaleReferenceEntries, minRecentSales);
+    var entries = Math.Max(DefaultSaleReferenceEntries, minRecentSales);
     var requestUri = string.Format(
       CultureInfo.InvariantCulture,
       "{0}/{1}?listings={2}&entries={3}",
@@ -149,7 +77,7 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
         .ParseAsync(responseStream, cancellationToken: cancellationToken)
         .ConfigureAwait(false);
 
-      var saleReference = ParseRecentSaleReference(document.RootElement, isHq, minRecentSales, maxSaleAgeDays, now);
+      var saleReference = ParseSaleReference(document.RootElement, isHq, minRecentSales, maxSaleAgeDays, now);
       LogSaleReferenceResult(worldId, itemId, isHq, saleReference);
       return saleReference;
     }
@@ -167,32 +95,6 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
       log.Warning(ex, "Universalis sale reference request failed for item {ItemId} on world {WorldId}", itemId, worldId);
       return null;
     }
-  }
-
-  private void LogAveragePriceResult(
-    uint worldId,
-    uint itemId,
-    bool isHq,
-    ThinMarketAveragePrice? averagePrice)
-  {
-    if (averagePrice is null)
-    {
-      log.Debug(
-        "Universalis average price request returned no usable price for item {ItemId} on world {WorldId}, hq {IsHq}",
-        itemId,
-        worldId,
-        isHq);
-      return;
-    }
-
-    log.Debug(
-      "Universalis average price request parsed item {ItemId} on world {WorldId}, hq {IsHq}, unit price {UnitPrice}, recent sales {RecentSales}, latest sale {LatestSaleAt}",
-      itemId,
-      worldId,
-      isHq,
-      averagePrice.Value.UnitPrice,
-      averagePrice.Value.RecentHistoryCount,
-      averagePrice.Value.LatestSaleAt);
   }
 
   private void LogSaleReferenceResult(
@@ -221,46 +123,7 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
       saleReference.Value.LatestSaleAt);
   }
 
-  private static ThinMarketAveragePrice? ParseAveragePrice(JsonElement root, bool isHq)
-  {
-    var averagePriceField = isHq ? AveragePriceHqField : AveragePriceNqField;
-    if (!TryGetPositiveUInt(root, averagePriceField, out var unitPrice))
-      return null;
-
-    var recentHistoryCount = 0;
-    DateTimeOffset? latestSaleAt = null;
-    if (root.TryGetProperty(RecentHistoryField, out var recentHistory) &&
-        recentHistory.ValueKind == JsonValueKind.Array)
-    {
-      foreach (var sale in recentHistory.EnumerateArray())
-      {
-        if (!IsMatchingQualitySale(sale, isHq))
-          continue;
-
-        if (!sale.TryGetProperty(TimestampField, out var timestamp) ||
-            !timestamp.TryGetInt64(out var unixTimestamp))
-          continue;
-
-        DateTimeOffset saleAt;
-        try
-        {
-          saleAt = DateTimeOffset.FromUnixTimeSeconds(unixTimestamp);
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-          continue;
-        }
-
-        recentHistoryCount++;
-        if (latestSaleAt is null || saleAt > latestSaleAt.Value)
-          latestSaleAt = saleAt;
-      }
-    }
-
-    return new ThinMarketAveragePrice(unitPrice, recentHistoryCount, latestSaleAt);
-  }
-
-  private static SaleReference? ParseRecentSaleReference(
+  private static SaleReference? ParseSaleReference(
     JsonElement root,
     bool isHq,
     int minRecentSales,

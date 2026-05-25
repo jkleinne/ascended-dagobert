@@ -1,5 +1,6 @@
 using Dagobert;
 using Dalamud.Plugin.Services;
+using Newtonsoft.Json;
 using System.Net;
 using System.Text;
 
@@ -13,12 +14,10 @@ internal static class Program
   {
     var tests = new (string Name, Func<Task> Run)[]
     {
-      ("NQ average uses only NQ history rows", NqAverageUsesOnlyNqHistoryRows),
-      ("HQ average uses only HQ history rows", HqAverageUsesOnlyHqHistoryRows),
-      ("Average price requests stable recent history sample", AveragePriceRequestsStableRecentHistorySample),
-      ("Average skips invalid timestamp history rows", AverageSkipsInvalidTimestampHistoryRows),
       ("No price reason explains bait guard skip", NoPriceReasonExplainsBaitGuardSkip),
       ("No price reason explains every thin market skip reason", NoPriceReasonExplainsEveryThinMarketSkipReason),
+      ("Legacy thin market config migrates to sale reference names", LegacyThinMarketConfigMigratesToSaleReferenceNames),
+      ("Missing legacy thin market config keeps sale reference defaults", MissingLegacyThinMarketConfigKeepsSaleReferenceDefaults),
       ("No price reason explains market board request failure", NoPriceReasonExplainsMarketBoardRequestFailure),
       ("No price reason explains missing eligible listings", NoPriceReasonExplainsMissingEligibleListings),
       ("No price reason explains duplicate response", NoPriceReasonExplainsDuplicateResponse),
@@ -100,150 +99,52 @@ internal static class Program
     return failures == 0 ? 0 : 1;
   }
 
-  private static async Task NqAverageUsesOnlyNqHistoryRows()
+  private static Task LegacyThinMarketConfigMigratesToSaleReferenceNames()
   {
-    const long newestHqSale = 1778591298;
-    const long onlyNqSale = 1777327167;
-    const long olderHqSale = 1777327171;
-    var provider = CreateProvider(
+    const string oldEnableField = "EnableThinMarketAverageFallback";
+    const string oldToleranceField = "ThinMarketAverageTolerancePercent";
+    const string newEnableField = "EnableThinMarketSaleReferenceFallback";
+    const string newToleranceField = "ThinMarketSaleReferenceTolerancePercent";
+    var config = JsonConvert.DeserializeObject<Configuration>(
       $$"""
       {
-        "averagePriceNQ": 8199,
-        "averagePriceHQ": 9536,
-        "recentHistory": [
-          { "hq": true, "pricePerUnit": 9536, "timestamp": {{newestHqSale}} },
-          { "hq": false, "pricePerUnit": 8199, "timestamp": {{onlyNqSale}} },
-          { "hq": true, "pricePerUnit": 1000, "timestamp": {{olderHqSale}} }
-        ]
+        "Version": 1,
+        "{{oldEnableField}}": false,
+        "{{oldToleranceField}}": 12.5
       }
-      """);
+      """) ?? throw new InvalidOperationException("expected legacy config to deserialize");
 
-    var average = await provider.GetAverageSalePriceAsync(34, 3920, false, 3, CancellationToken.None);
+    AssertEqual(true, config.EnableThinMarketSaleReferenceFallback, "sale reference fallback default before migration");
+    AssertEqual(40.0f, config.ThinMarketSaleReferenceTolerancePercent, "sale reference tolerance default before migration");
 
-    var price = average ?? throw new InvalidOperationException("expected an NQ average");
-    AssertEqual((uint)8199, price.UnitPrice, "NQ average price");
-    AssertEqual(1, price.RecentHistoryCount, "NQ recent history count");
-    AssertEqual(DateTimeOffset.FromUnixTimeSeconds(onlyNqSale), price.LatestSaleAt, "NQ latest sale");
+    config.MigrateThinMarketSaleReferenceSettings();
+
+    AssertEqual(false, config.EnableThinMarketSaleReferenceFallback, "migrated sale reference fallback enabled");
+    AssertEqual(12.5f, config.ThinMarketSaleReferenceTolerancePercent, "migrated sale reference tolerance");
+
+    var serialized = JsonConvert.SerializeObject(config);
+    AssertEqual(false, serialized.Contains(oldEnableField, StringComparison.Ordinal), "serialized legacy enable field absent");
+    AssertEqual(false, serialized.Contains(oldToleranceField, StringComparison.Ordinal), "serialized legacy tolerance field absent");
+    AssertEqual(true, serialized.Contains(newEnableField, StringComparison.Ordinal), "serialized sale reference enable field present");
+    AssertEqual(true, serialized.Contains(newToleranceField, StringComparison.Ordinal), "serialized sale reference tolerance field present");
+    return Task.CompletedTask;
   }
 
-  private static async Task HqAverageUsesOnlyHqHistoryRows()
+  private static Task MissingLegacyThinMarketConfigKeepsSaleReferenceDefaults()
   {
-    const long newestNqSale = 1778600000;
-    const long newestHqSale = 1778500000;
-    const long olderHqSale = 1778400000;
-    var provider = CreateProvider(
-      $$"""
+    var config = JsonConvert.DeserializeObject<Configuration>(
+      """
       {
-        "averagePriceNQ": 1000,
-        "averagePriceHQ": 2500,
-        "recentHistory": [
-          { "hq": false, "pricePerUnit": 1000, "timestamp": {{newestNqSale}} },
-          { "hq": true, "pricePerUnit": 2500, "timestamp": {{newestHqSale}} },
-          { "hq": true, "pricePerUnit": 2000, "timestamp": {{olderHqSale}} }
-        ]
+        "Version": 1
       }
-      """);
+      """) ?? throw new InvalidOperationException("expected config to deserialize");
 
-    var average = await provider.GetAverageSalePriceAsync(34, 3920, true, 3, CancellationToken.None);
+    config.MigrateThinMarketSaleReferenceSettings();
 
-    var price = average ?? throw new InvalidOperationException("expected an HQ average");
-    AssertEqual((uint)2500, price.UnitPrice, "HQ average price");
-    AssertEqual(2, price.RecentHistoryCount, "HQ recent history count");
-    AssertEqual(DateTimeOffset.FromUnixTimeSeconds(newestHqSale), price.LatestSaleAt, "HQ latest sale");
-  }
-
-  private static async Task AveragePriceRequestsStableRecentHistorySample()
-  {
-    const long newestNqSale = 1778600000;
-    const long olderNqSale = 1778500000;
-    const long hqSaleBetweenNqRows = 1778550000;
-    var responseJson =
-      $$"""
-      {
-        "averagePriceNQ": 1000,
-        "averagePriceHQ": 2000,
-        "recentHistory": [
-          { "hq": false, "pricePerUnit": 1000, "timestamp": {{newestNqSale}} },
-          { "hq": true, "pricePerUnit": 2000, "timestamp": {{hqSaleBetweenNqRows}} },
-          { "hq": false, "pricePerUnit": 1100, "timestamp": {{olderNqSale}} }
-        ]
-      }
-      """;
-    using var threeMinimumHandler = new RequestRecordingResponseHandler(responseJson);
-    var threeMinimumProvider = CreateProvider(threeMinimumHandler);
-    using var twoMinimumHandler = new RequestRecordingResponseHandler(responseJson);
-    var twoMinimumProvider = CreateProvider(twoMinimumHandler);
-    using var twentyOneMinimumHandler = new RequestRecordingResponseHandler(responseJson);
-    var twentyOneMinimumProvider = CreateProvider(twentyOneMinimumHandler);
-
-    var averageWithThreeMinimum = await threeMinimumProvider.GetAverageSalePriceAsync(
-      34,
-      3920,
-      false,
-      3,
-      CancellationToken.None);
-    var averageWithTwoMinimum = await twoMinimumProvider.GetAverageSalePriceAsync(
-      34,
-      3920,
-      false,
-      2,
-      CancellationToken.None);
-    var averageWithTwentyOneMinimum = await twentyOneMinimumProvider.GetAverageSalePriceAsync(
-      34,
-      3920,
-      false,
-      21,
-      CancellationToken.None);
-
-    var priceWithThreeMinimum = averageWithThreeMinimum
-                                ?? throw new InvalidOperationException("expected average with minimum 3");
-    var priceWithTwoMinimum = averageWithTwoMinimum
-                              ?? throw new InvalidOperationException("expected average with minimum 2");
-    _ = averageWithTwentyOneMinimum
-        ?? throw new InvalidOperationException("expected average with minimum 21");
-    AssertEqual(
-      "https://universalis.test/api/v2/34/3920?listings=0&entries=20",
-      threeMinimumHandler.RequestUris.Single(),
-      "minimum 3 request uri");
-    AssertEqual(
-      "https://universalis.test/api/v2/34/3920?listings=0&entries=20",
-      twoMinimumHandler.RequestUris.Single(),
-      "minimum 2 request uri");
-    AssertEqual(
-      "https://universalis.test/api/v2/34/3920?listings=0&entries=21",
-      twentyOneMinimumHandler.RequestUris.Single(),
-      "minimum 21 request uri");
-    AssertEqual(2, priceWithThreeMinimum.RecentHistoryCount, "minimum 3 recent history count");
-    AssertEqual(2, priceWithTwoMinimum.RecentHistoryCount, "minimum 2 recent history count");
-    AssertEqual(DateTimeOffset.FromUnixTimeSeconds(newestNqSale), priceWithThreeMinimum.LatestSaleAt, "minimum 3 latest sale");
-    AssertEqual(DateTimeOffset.FromUnixTimeSeconds(newestNqSale), priceWithTwoMinimum.LatestSaleAt, "minimum 2 latest sale");
-  }
-
-  private static async Task AverageSkipsInvalidTimestampHistoryRows()
-  {
-    const long newestValidNqSale = 1778600000;
-    const long olderValidNqSale = 1778500000;
-    const long invalidNqSale = 999999999999999999;
-    var provider = CreateProvider(
-      $$"""
-      {
-        "averagePriceNQ": 1000,
-        "averagePriceHQ": 2000,
-        "recentHistory": [
-          { "hq": false, "pricePerUnit": 999, "timestamp": {{invalidNqSale}} },
-          { "hq": true, "pricePerUnit": 2000, "timestamp": {{newestValidNqSale}} },
-          { "hq": false, "pricePerUnit": 1000, "timestamp": {{newestValidNqSale}} },
-          { "hq": false, "pricePerUnit": 1100, "timestamp": {{olderValidNqSale}} }
-        ]
-      }
-      """);
-
-    var average = await provider.GetAverageSalePriceAsync(34, 3920, false, 3, CancellationToken.None);
-
-    var price = average ?? throw new InvalidOperationException("expected average with invalid timestamp row skipped");
-    AssertEqual((uint)1000, price.UnitPrice, "average with invalid timestamp price");
-    AssertEqual(2, price.RecentHistoryCount, "average valid recent history count");
-    AssertEqual(DateTimeOffset.FromUnixTimeSeconds(newestValidNqSale), price.LatestSaleAt, "average latest valid sale");
+    AssertEqual(true, config.EnableThinMarketSaleReferenceFallback, "missing legacy fallback keeps default");
+    AssertEqual(40.0f, config.ThinMarketSaleReferenceTolerancePercent, "missing legacy tolerance keeps default");
+    AssertEqual(false, config.HasLegacyThinMarketSaleReferenceSettings, "missing legacy config leaves no legacy values");
+    return Task.CompletedTask;
   }
 
   private static Task NoPriceReasonExplainsBaitGuardSkip()
@@ -572,8 +473,6 @@ internal static class Program
     var provider = CreateProvider(
       $$"""
       {
-        "averagePriceNQ": 1000,
-        "averagePriceHQ": 2000,
         "recentHistory": [
           { "hq": false, "pricePerUnit": 400, "timestamp": {{now.ToUnixTimeSeconds()}} },
           { "hq": false, "pricePerUnit": 100, "timestamp": {{now.AddDays(-1).ToUnixTimeSeconds()}} },
@@ -584,7 +483,7 @@ internal static class Program
       }
       """);
 
-    var saleReference = await provider.GetRecentSaleReferenceAsync(34, 3920, false, 3, 30, now, CancellationToken.None);
+    var saleReference = await provider.GetSaleReferenceAsync(34, 3920, false, 3, 30, now, CancellationToken.None);
 
     var reference = saleReference ?? throw new InvalidOperationException("expected an NQ sale reference");
     AssertEqual((uint)200, reference.MedianUnitPrice, "NQ sale median");
@@ -598,7 +497,6 @@ internal static class Program
     var provider = CreateProvider(
       $$"""
       {
-        "averagePriceNQ": 1000,
         "recentHistory": [
           { "hq": false, "pricePerUnit": 100, "timestamp": {{now.ToUnixTimeSeconds()}} },
           { "hq": true, "pricePerUnit": 100, "timestamp": {{now.ToUnixTimeSeconds()}} }
@@ -606,7 +504,7 @@ internal static class Program
       }
       """);
 
-    var saleReference = await provider.GetRecentSaleReferenceAsync(34, 3920, false, 2, 30, now, CancellationToken.None);
+    var saleReference = await provider.GetSaleReferenceAsync(34, 3920, false, 2, 30, now, CancellationToken.None);
 
     AssertEqual<SaleReference?>(null, saleReference, "too few sale reference");
   }
@@ -617,7 +515,6 @@ internal static class Program
     var provider = CreateProvider(
       $$"""
       {
-        "averagePriceNQ": 1000,
         "recentHistory": [
           { "hq": false, "pricePerUnit": 20000, "timestamp": {{now.ToUnixTimeSeconds()}} },
           { "hq": false, "pricePerUnit": 19980, "timestamp": {{now.AddHours(-1).ToUnixTimeSeconds()}} },
@@ -627,7 +524,7 @@ internal static class Program
       }
       """);
 
-    var saleReference = await provider.GetRecentSaleReferenceAsync(34, 3920, false, 4, 30, now, CancellationToken.None);
+    var saleReference = await provider.GetSaleReferenceAsync(34, 3920, false, 4, 30, now, CancellationToken.None);
 
     var reference = saleReference ?? throw new InvalidOperationException("expected a sale reference with an outlier");
     AssertEqual((uint)20000, reference.MedianUnitPrice, "sale median with high outlier");
@@ -641,7 +538,6 @@ internal static class Program
     var provider = CreateProvider(
       $$"""
       {
-        "averagePriceNQ": 1000,
         "recentHistory": [
           { "hq": false, "pricePerUnit": 100, "timestamp": {{now.AddDays(-31).ToUnixTimeSeconds()}} },
           { "hq": false, "pricePerUnit": 200, "timestamp": {{now.AddDays(-32).ToUnixTimeSeconds()}} },
@@ -650,7 +546,7 @@ internal static class Program
       }
       """);
 
-    var saleReference = await provider.GetRecentSaleReferenceAsync(34, 3920, false, 3, 30, now, CancellationToken.None);
+    var saleReference = await provider.GetSaleReferenceAsync(34, 3920, false, 3, 30, now, CancellationToken.None);
 
     AssertEqual<SaleReference?>(null, saleReference, "stale sale reference");
   }
@@ -661,7 +557,6 @@ internal static class Program
     var provider = CreateProvider(
       $$"""
       {
-        "averagePriceNQ": 1000,
         "recentHistory": [
           7,
           { "hq": false, "pricePerUnit": 999, "timestamp": 999999999999999999 },
@@ -674,7 +569,7 @@ internal static class Program
       }
       """);
 
-    var saleReference = await provider.GetRecentSaleReferenceAsync(34, 3920, false, 3, 30, now, CancellationToken.None);
+    var saleReference = await provider.GetSaleReferenceAsync(34, 3920, false, 3, 30, now, CancellationToken.None);
 
     var reference = saleReference ?? throw new InvalidOperationException("expected a sale reference");
     AssertEqual((uint)200, reference.MedianUnitPrice, "sale median with invalid rows");
@@ -1456,7 +1351,7 @@ internal static class Program
       .ToList();
   }
 
-  private static UniversalisAveragePriceProvider CreateProvider(string json)
+  private static UniversalisPriceProvider CreateProvider(string json)
   {
     var response = new HttpResponseMessage(HttpStatusCode.OK)
     {
@@ -1467,21 +1362,21 @@ internal static class Program
       BaseAddress = new Uri("https://universalis.test/api/v2/")
     };
 
-    return new UniversalisAveragePriceProvider(httpClient, new TestPluginLog());
+    return new UniversalisPriceProvider(httpClient, new TestPluginLog());
   }
 
   [System.Diagnostics.CodeAnalysis.SuppressMessage(
     "Reliability",
     "CA2000:Dispose objects before losing scope",
     Justification = "Test providers use short-lived HttpClient instances that remain alive for the scenario duration.")]
-  private static UniversalisAveragePriceProvider CreateProvider(HttpMessageHandler handler)
+  private static UniversalisPriceProvider CreateProvider(HttpMessageHandler handler)
   {
     var httpClient = new HttpClient(handler)
     {
       BaseAddress = new Uri("https://universalis.test/api/v2/")
     };
 
-    return new UniversalisAveragePriceProvider(httpClient, new TestPluginLog());
+    return new UniversalisPriceProvider(httpClient, new TestPluginLog());
   }
 
   private static DateTimeOffset FixedPricingNow()

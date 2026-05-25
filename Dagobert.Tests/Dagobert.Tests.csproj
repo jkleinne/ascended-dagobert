@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../Dagobert/Configuration.cs" Link="Production/Configuration.cs" />
     <Compile Include="../Dagobert/BaitGuard.cs" Link="Production/BaitGuard.cs" />
     <Compile Include="../Dagobert/AutoPinchTaskGuard.cs" Link="Production/AutoPinchTaskGuard.cs" />
     <Compile Include="../Dagobert/AutoPinchRunPlanner.cs" Link="Production/AutoPinchRunPlanner.cs" />
@@ -19,6 +20,10 @@
     <Compile Include="../Dagobert/PricingMessageFormatter.cs" Link="Production/PricingMessageFormatter.cs" />
     <Compile Include="../Dagobert/SaleReference.cs" Link="Production/SaleReference.cs" />
     <Compile Include="../Dagobert/ThinMarketPricePolicy.cs" Link="Production/ThinMarketPricePolicy.cs" />
-    <Compile Include="../Dagobert/UniversalisAveragePriceProvider.cs" Link="Production/UniversalisAveragePriceProvider.cs" />
+    <Compile Include="../Dagobert/UniversalisPriceProvider.cs" Link="Production/UniversalisPriceProvider.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
   </ItemGroup>
 </Project>

@@ -42,7 +42,7 @@ namespace Dagobert
     private const int ComparePricesCallbackId = 4;
 
     public AutoPinch(
-      IRecentSaleReferenceProvider saleReferenceProvider,
+      ISaleReferenceProvider saleReferenceProvider,
       MarketBoardRequestTracker marketBoardRequestTracker,
       AutoRetainerSuppressionCoordinator autoRetainerSuppressionCoordinator)
       : base("Ascended Dagobert", ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.AlwaysUseWindowPadding | ImGuiWindowFlags.AlwaysAutoResize, true)

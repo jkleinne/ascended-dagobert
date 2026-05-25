@@ -723,22 +723,22 @@ public sealed class ConfigWindow : Window
 
   private static void DrawThinMarketSection()
   {
-    if (!ImGui.CollapsingHeader("Thin Market Average Fallback"))
+    if (!ImGui.CollapsingHeader("Thin Market Sale Reference Fallback"))
       return;
 
     ImGui.Indent();
 
-    var enabled = Plugin.Configuration.EnableThinMarketAverageFallback;
-    if (ImGui.Checkbox("Enable Average Fallback", ref enabled))
+    var enabled = Plugin.Configuration.EnableThinMarketSaleReferenceFallback;
+    if (ImGui.Checkbox("Enable Sale Reference Fallback", ref enabled))
     {
-      Plugin.Configuration.EnableThinMarketAverageFallback = enabled;
+      Plugin.Configuration.EnableThinMarketSaleReferenceFallback = enabled;
       Plugin.Configuration.Save();
     }
     if (ImGui.IsItemHovered())
     {
       ImGui.BeginTooltip();
-      ImGui.SetTooltip("If checked, thin markets can use the Universalis average sale price from your home world.\r\n" +
-                       "No listings uses the average directly. One or two listings only undercut when the floor is close to that average.");
+      ImGui.SetTooltip("If checked, thin markets can use the median matching Universalis sale reference from your home world.\r\n" +
+                       "No listings use the sale reference directly. Own-only listings are protected unless your price is close to that reference.");
       ImGui.EndTooltip();
     }
 
@@ -766,12 +766,12 @@ public sealed class ConfigWindow : Window
     }
 
     ImGui.BeginGroup();
-    ImGui.Text("Average Tolerance:");
+    ImGui.Text("Sale Reference Tolerance:");
     ImGui.SameLine();
-    float tolerance = Plugin.Configuration.ThinMarketAverageTolerancePercent;
-    if (ImGui.SliderFloat("##thinMarketAverageTolerance", ref tolerance, 1.0f, 100.0f, "%.1f"))
+    float tolerance = Plugin.Configuration.ThinMarketSaleReferenceTolerancePercent;
+    if (ImGui.SliderFloat("##thinMarketSaleReferenceTolerance", ref tolerance, 1.0f, 100.0f, "%.1f"))
     {
-      Plugin.Configuration.ThinMarketAverageTolerancePercent = MathF.Round(tolerance, 1);
+      Plugin.Configuration.ThinMarketSaleReferenceTolerancePercent = MathF.Round(tolerance, 1);
       Plugin.Configuration.Save();
     }
     ImGui.SameLine();
@@ -780,7 +780,7 @@ public sealed class ConfigWindow : Window
     if (ImGui.IsItemHovered())
     {
       ImGui.BeginTooltip();
-      ImGui.SetTooltip("For one or more listings, the current floor must be within this percent of the home world average sale price. Default 40%.");
+      ImGui.SetTooltip("For competitor listings, the current floor must be within this percent of the median sale reference. Own-only listings use this to avoid moving far from recent sales. Default 40%.");
       ImGui.EndTooltip();
     }
 
@@ -797,7 +797,7 @@ public sealed class ConfigWindow : Window
     if (ImGui.IsItemHovered())
     {
       ImGui.BeginTooltip();
-      ImGui.SetTooltip("How many recent Universalis sale rows must exist before the average is trusted. Default 3.");
+      ImGui.SetTooltip("How many matching Universalis sale rows must exist before the median sale reference is trusted. Default 3.");
       ImGui.EndTooltip();
     }
 
@@ -816,7 +816,7 @@ public sealed class ConfigWindow : Window
     if (ImGui.IsItemHovered())
     {
       ImGui.BeginTooltip();
-      ImGui.SetTooltip("The newest Universalis sale row must be this recent before the average is trusted. Default 30 days.");
+      ImGui.SetTooltip("The newest matching Universalis sale row must be this recent before the sale reference is trusted. Default 30 days.");
       ImGui.EndTooltip();
     }
 
