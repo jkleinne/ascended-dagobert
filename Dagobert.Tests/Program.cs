@@ -37,6 +37,7 @@ internal static class Program
       ("Sale reference rejects too few matching sales", SaleReferenceRejectsTooFewMatchingSales),
       ("Sale reference rejects stale newest matching sale", SaleReferenceRejectsStaleNewestMatchingSale),
       ("Sale reference skips invalid sale rows", SaleReferenceSkipsInvalidSaleRows),
+      ("Sale reference rejects fractional price rows", SaleReferenceRejectsFractionalPriceRows),
       ("Thin market holds own price outside sale reference tolerance", ThinMarketHoldsOwnPriceOutsideSaleReferenceTolerance),
       ("Thin market moves own price within sale reference tolerance", ThinMarketMovesOwnPriceWithinSaleReferenceTolerance),
       ("Thin market uses sale reference for empty board", ThinMarketUsesSaleReferenceForEmptyBoard),
@@ -575,6 +576,25 @@ internal static class Program
     AssertEqual((uint)200, reference.MedianUnitPrice, "sale median with invalid rows");
     AssertEqual(3, reference.RecentHistoryCount, "valid sale count");
     AssertEqual(now, reference.LatestSaleAt, "latest valid sale");
+  }
+
+  private static async Task SaleReferenceRejectsFractionalPriceRows()
+  {
+    var now = DateTimeOffset.FromUnixTimeSeconds(1778600000);
+    var provider = CreateProvider(
+      $$"""
+      {
+        "recentHistory": [
+          { "hq": false, "pricePerUnit": 0.5, "timestamp": {{now.ToUnixTimeSeconds()}} },
+          { "hq": false, "pricePerUnit": 100, "timestamp": {{now.AddDays(-1).ToUnixTimeSeconds()}} },
+          { "hq": false, "pricePerUnit": 200, "timestamp": {{now.AddDays(-2).ToUnixTimeSeconds()}} }
+        ]
+      }
+      """);
+
+    var saleReference = await provider.GetSaleReferenceAsync(34, 3920, false, 3, 30, now, CancellationToken.None);
+
+    AssertEqual<SaleReference?>(null, saleReference, "fractional price row rejected");
   }
 
   private static Task ThinMarketHoldsOwnPriceOutsideSaleReferenceTolerance()

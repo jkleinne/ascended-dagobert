@@ -196,14 +196,12 @@ internal sealed class UniversalisPriceProvider(HttpClient httpClient, IPluginLog
     if (!root.TryGetProperty(propertyName, out var property))
       return false;
 
-    if (property.ValueKind == JsonValueKind.Number && property.TryGetDecimal(out var decimalValue))
+    if (property.ValueKind == JsonValueKind.Number &&
+        property.TryGetUInt32(out var unsignedValue) &&
+        unsignedValue > 0)
     {
-      var rounded = decimal.Round(decimalValue, 0, MidpointRounding.AwayFromZero);
-      if (rounded > 0 && rounded <= uint.MaxValue)
-      {
-        value = (uint)rounded;
-        return true;
-      }
+      value = unsignedValue;
+      return true;
     }
 
     return false;
