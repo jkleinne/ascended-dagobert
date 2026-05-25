@@ -21,7 +21,7 @@ internal interface IAverageSalePriceProvider
 
 internal interface IRecentSaleReferenceProvider
 {
-  Task<RecentSaleReference?> GetRecentSaleReferenceAsync(
+  Task<SaleReference?> GetRecentSaleReferenceAsync(
     uint worldId,
     uint itemId,
     bool isHq,
@@ -103,7 +103,7 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
     }
   }
 
-  public async Task<RecentSaleReference?> GetRecentSaleReferenceAsync(
+  public async Task<SaleReference?> GetRecentSaleReferenceAsync(
     uint worldId,
     uint itemId,
     bool isHq,
@@ -199,7 +199,7 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
     uint worldId,
     uint itemId,
     bool isHq,
-    RecentSaleReference? saleReference)
+    SaleReference? saleReference)
   {
     if (saleReference is null)
     {
@@ -260,7 +260,7 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
     return new ThinMarketAveragePrice(unitPrice, recentHistoryCount, latestSaleAt);
   }
 
-  private static RecentSaleReference? ParseRecentSaleReference(
+  private static SaleReference? ParseRecentSaleReference(
     JsonElement root,
     bool isHq,
     int minRecentSales,
@@ -312,7 +312,7 @@ internal sealed class UniversalisAveragePriceProvider(HttpClient httpClient, IPl
 
     prices.Sort();
     var median = prices[(prices.Count - 1) / 2];
-    return new RecentSaleReference(median, prices.Count, latestSaleAt.Value);
+    return new SaleReference(median, prices.Count, latestSaleAt.Value);
   }
 
   private static bool IsMatchingQualitySale(JsonElement sale, bool isHq)

@@ -319,7 +319,7 @@ namespace Dagobert
       }
     }
 
-    private async Task<RecentSaleReference?> GetRecentSaleReferenceAsync(int requestVersion)
+    private async Task<SaleReference?> GetRecentSaleReferenceAsync(int requestVersion)
     {
       if (!Plugin.PlayerState.IsLoaded || _currentItemId == 0)
       {
@@ -405,7 +405,7 @@ namespace Dagobert
         if (listingOnlyTarget is null)
           return null;
 
-        RecentSaleReference? selfSaleReference = null;
+        SaleReference? selfSaleReference = null;
         if (opts.Enabled)
           selfSaleReference = await GetRecentSaleReferenceAsync(requestVersion);
 
@@ -464,7 +464,7 @@ namespace Dagobert
           });
       }
 
-      RecentSaleReference? competitorSaleReference = null;
+      SaleReference? competitorSaleReference = null;
       if (opts.Enabled)
         competitorSaleReference = await GetRecentSaleReferenceAsync(requestVersion);
 

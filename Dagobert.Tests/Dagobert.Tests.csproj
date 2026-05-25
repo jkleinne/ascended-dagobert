@@ -17,6 +17,7 @@
     <Compile Include="../Dagobert/PostPinchWorkflow.cs" Link="Production/PostPinchWorkflow.cs" />
     <Compile Include="../Dagobert/PricingDebugDetail.cs" Link="Production/PricingDebugDetail.cs" />
     <Compile Include="../Dagobert/PricingMessageFormatter.cs" Link="Production/PricingMessageFormatter.cs" />
+    <Compile Include="../Dagobert/SaleReference.cs" Link="Production/SaleReference.cs" />
     <Compile Include="../Dagobert/ThinMarketPricePolicy.cs" Link="Production/ThinMarketPricePolicy.cs" />
     <Compile Include="../Dagobert/UniversalisAveragePriceProvider.cs" Link="Production/UniversalisAveragePriceProvider.cs" />
   </ItemGroup>

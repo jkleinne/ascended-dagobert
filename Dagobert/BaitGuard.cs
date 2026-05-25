@@ -5,11 +5,6 @@ using System.Linq;
 
 namespace Dagobert;
 
-internal readonly record struct RecentSaleReference(
-  uint MedianUnitPrice,
-  int RecentHistoryCount,
-  DateTimeOffset LatestSaleAt);
-
 /// <summary>
 /// Picks a credible competing listing to undercut, rather than blindly taking the
 /// lowest price. Defends against bait listings (e.g. a single-unit listing priced
@@ -72,7 +67,7 @@ internal static class BaitGuard
     IReadOnlyList<IMarketBoardItemListing> listings,
     IReadOnlyList<int> candidateIndices,
     Options opts,
-    RecentSaleReference? saleReference = null)
+    SaleReference? saleReference = null)
   {
     if (candidateIndices.Count == 0)
       return null;
@@ -151,7 +146,7 @@ internal static class BaitGuard
     IReadOnlyList<IMarketBoardItemListing> listings,
     IReadOnlyList<int> candidates,
     Options opts,
-    RecentSaleReference? saleReference)
+    SaleReference? saleReference)
   {
     if (candidates.Count == 0)
       return null;

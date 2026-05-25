@@ -521,7 +521,7 @@ internal static class Program
   private static Task BaitGuardSkipsTinyClusterBelowSaleMedianFloor()
   {
     var listings = CreateListings((100u, 1u), (105u, 1u), (300u, 1u));
-    var saleReference = new RecentSaleReference(300, 3, DateTimeOffset.UtcNow);
+    var saleReference = new SaleReference(300, 3, DateTimeOffset.UtcNow);
     var target = BaitGuard.SelectTargetIndex(listings, [0, 1, 2], DefaultBaitOptions(), saleReference);
 
     AssertEqual<int?>(2, target, "tiny low cluster target");
@@ -531,7 +531,7 @@ internal static class Program
   private static Task BaitGuardAcceptsBelowFloorClusterWithEnoughListings()
   {
     var listings = CreateListings((100u, 1u), (103u, 1u), (105u, 1u), (300u, 1u));
-    var saleReference = new RecentSaleReference(300, 3, DateTimeOffset.UtcNow);
+    var saleReference = new SaleReference(300, 3, DateTimeOffset.UtcNow);
     var target = BaitGuard.SelectTargetIndex(listings, [0, 1, 2, 3], DefaultBaitOptions(), saleReference);
 
     AssertEqual<int?>(0, target, "listing-backed low cluster target");
@@ -541,7 +541,7 @@ internal static class Program
   private static Task BaitGuardAcceptsBelowFloorClusterWithEnoughQuantity()
   {
     var listings = CreateListings((100u, 9u), (104u, 12u), (300u, 1u));
-    var saleReference = new RecentSaleReference(300, 3, DateTimeOffset.UtcNow);
+    var saleReference = new SaleReference(300, 3, DateTimeOffset.UtcNow);
     var target = BaitGuard.SelectTargetIndex(listings, [0, 1, 2], DefaultBaitOptions(), saleReference);
 
     AssertEqual<int?>(0, target, "quantity-backed low cluster target");
@@ -551,7 +551,7 @@ internal static class Program
   private static Task BaitGuardAppliesGapPromotionBeforeSaleReference()
   {
     var listings = CreateListings((100u, 100u), (300u, 1u), (305u, 1u));
-    var saleReference = new RecentSaleReference(600, 3, DateTimeOffset.UtcNow);
+    var saleReference = new SaleReference(600, 3, DateTimeOffset.UtcNow);
     var target = BaitGuard.SelectTargetIndex(listings, [0, 1, 2], DefaultBaitOptions(), saleReference);
 
     AssertEqual<int?>(1, target, "gap-promoted target");
@@ -600,7 +600,7 @@ internal static class Program
 
     var saleReference = await provider.GetRecentSaleReferenceAsync(34, 3920, false, 2, 30, now, CancellationToken.None);
 
-    AssertEqual<RecentSaleReference?>(null, saleReference, "too few sale reference");
+    AssertEqual<SaleReference?>(null, saleReference, "too few sale reference");
   }
 
   private static async Task SaleReferenceRejectsStaleNewestMatchingSale()
@@ -620,7 +620,7 @@ internal static class Program
 
     var saleReference = await provider.GetRecentSaleReferenceAsync(34, 3920, false, 3, 30, now, CancellationToken.None);
 
-    AssertEqual<RecentSaleReference?>(null, saleReference, "stale sale reference");
+    AssertEqual<SaleReference?>(null, saleReference, "stale sale reference");
   }
 
   private static async Task SaleReferenceSkipsInvalidSaleRows()
