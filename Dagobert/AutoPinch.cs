@@ -36,10 +36,12 @@ namespace Dagobert
     private readonly TaskManager _taskManager;
     private readonly AutoRetainerSuppressionCoordinator _autoRetainerSuppressionCoordinator;
     private readonly AutoPinchTaskGuard _autoPinchTaskGuard;
+    private readonly Func<long> _getTickCount;
     private bool _hasTalkAddonListeners;
     private Dictionary<string, int?> _cachedPrices = [];
     private const uint ComparePricesButtonNodeId = 4;
     private const int ComparePricesCallbackId = 4;
+    private const int LegacyDirectTaskTimeoutMs = 10_000;
 
     public AutoPinch(
       ISaleReferenceProvider saleReferenceProvider,
@@ -65,15 +67,18 @@ namespace Dagobert
 
       _taskManager = new TaskManager
       {
-        TimeLimitMS = 10000,
+        TimeLimitMS = LegacyDirectTaskTimeoutMs,
         AbortOnTimeout = true
       };
       _autoRetainerSuppressionCoordinator = autoRetainerSuppressionCoordinator;
+      _getTickCount = () => Environment.TickCount64;
       _autoPinchTaskGuard = new AutoPinchTaskGuard(
         autoRetainerSuppressionCoordinator,
         () => _taskManager.Abort(),
         RemoveTalkAddonListeners,
-        LogAutoPinchTaskException);
+        LogAutoPinchTaskException,
+        LogAutoPinchTaskTimeout,
+        _getTickCount);
       // Fails on non-windows
       try
       {
@@ -267,17 +272,17 @@ namespace Dagobert
     private void EnqueueSingleRetainer(int index)
     {
       EnqueueAutoPinchTask(() => ClickRetainer(index), $"ClickRetainer{index}");
-      _taskManager.DelayNext(100);
+      EnqueueAutoPinchDelay(100, $"DelayAfterClickRetainer{index}");
       EnqueueAutoPinchTask(ClickSellItems, $"ClickSellItems{index}");
-      _taskManager.DelayNext(500);
+      EnqueueAutoPinchDelay(500, $"DelayAfterClickSellItems{index}");
       EnqueueAutoPinchTask(
         () => AutoPinchRunPlanner.ShouldCompleteSelectedRetainerTask(EnqueueAllRetainerItems(InsertSingleItem, true)),
         $"EnqueueAllRetainerItems{index}");
-      _taskManager.DelayNext(500);
+      EnqueueAutoPinchDelay(500, $"DelayAfterRetainerItems{index}");
       EnqueueAutoPinchTask(CloseRetainerSellList, $"CloseRetainerSellList{index}");
-      _taskManager.DelayNext(100);
+      EnqueueAutoPinchDelay(100, $"DelayAfterCloseRetainerSellList{index}");
       EnqueueAutoPinchTask(CloseRetainer, $"CloseRetainer{index}");
-      _taskManager.DelayNext(100);
+      EnqueueAutoPinchDelay(100, $"DelayAfterCloseRetainer{index}");
     }
 
     private static unsafe bool? ClickRetainer(int index)
@@ -378,13 +383,16 @@ namespace Dagobert
     private void EnqueueSingleItem(int index)
     {
       EnqueueAutoPinchTask(() => OpenItemContextMenu(index), $"OpenItemContextMenu{index}");
-      _taskManager.DelayNext(100);
+      EnqueueAutoPinchDelay(100, $"DelayAfterOpenItemContextMenu{index}");
       EnqueueAutoPinchTask(ClickAdjustPrice, $"ClickAdjustPrice{index}");
-      _taskManager.DelayNext(100);
+      EnqueueAutoPinchDelay(100, $"DelayAfterClickAdjustPrice{index}");
       EnqueueAutoPinchTask(DelayMarketBoard, $"DelayMB{index}");
       EnqueueAutoPinchTask(ClickComparePrice, $"ClickComparePrice{index}");
-      _taskManager.DelayNext(Plugin.Configuration.MarketBoardKeepOpenMS);
-      EnqueueAutoPinchTask(WaitForMarketPrice, $"WaitForMarketPrice{index}");
+      EnqueueAutoPinchDelay(Plugin.Configuration.MarketBoardKeepOpenMS, $"DelayMarketBoardKeepOpen{index}");
+      EnqueueAutoPinchTask(
+        WaitForMarketPrice,
+        $"WaitForMarketPrice{index}",
+        AutoPinchTimeoutPolicy.MarketPriceWaitTimeoutMs);
       EnqueueAutoPinchTask(SetNewPrice, $"SetNewPrice{index}");
     }
 
@@ -392,13 +400,16 @@ namespace Dagobert
     {
       // reverse order because we INSERT
       InsertAutoPinchTask(SetNewPrice, $"SetNewPrice{index}");
-      InsertAutoPinchTask(WaitForMarketPrice, $"WaitForMarketPrice{index}");
-      _taskManager.InsertDelayNext(Plugin.Configuration.MarketBoardKeepOpenMS);
+      InsertAutoPinchTask(
+        WaitForMarketPrice,
+        $"WaitForMarketPrice{index}",
+        AutoPinchTimeoutPolicy.MarketPriceWaitTimeoutMs);
+      InsertAutoPinchDelay(Plugin.Configuration.MarketBoardKeepOpenMS, $"DelayMarketBoardKeepOpen{index}");
       InsertAutoPinchTask(ClickComparePrice, $"ClickComparePrice{index}");
       InsertAutoPinchTask(DelayMarketBoard, $"DelayMB{index}");
-      _taskManager.InsertDelayNext(100);
+      InsertAutoPinchDelay(100, $"DelayAfterClickAdjustPrice{index}");
       InsertAutoPinchTask(ClickAdjustPrice, $"ClickAdjustPrice{index}");
-      _taskManager.InsertDelayNext(100);
+      InsertAutoPinchDelay(100, $"DelayAfterOpenItemContextMenu{index}");
       InsertAutoPinchTask(() => OpenItemContextMenu(index), $"OpenItemContextMenu{index}");
     }
 
@@ -462,7 +473,7 @@ namespace Dagobert
         if (!_cachedPrices.TryGetValue(itemName, out int? value) || value <= 0)
         {
           Svc.Log.Debug($"{itemName} has no cached price (or that price was <= 0), delaying next mb open");
-          _taskManager.InsertDelayNext(Plugin.Configuration.GetMBPricesDelayMS);
+          InsertAutoPinchDelay(Plugin.Configuration.GetMBPricesDelayMS, "DelayMarketBoardPriceFetch");
         }
 
         return true;
@@ -701,9 +712,21 @@ namespace Dagobert
       }
     }
 
-    private void EnqueueAutoPinchTask(Func<bool?> task, string taskName)
+    private void EnqueueAutoPinchTask(
+      Func<bool?> task,
+      string taskName,
+      int timeoutMs = AutoPinchTimeoutPolicy.GeneralTaskTimeoutMs)
     {
-      _taskManager.Enqueue(() => _autoPinchTaskGuard.Run(task, taskName), taskName);
+      _taskManager.Enqueue(
+        () => _autoPinchTaskGuard.Run(task, taskName, timeoutMs),
+        AutoPinchTimeoutPolicy.GetLegacyBackstopTimeoutMs(timeoutMs),
+        true,
+        taskName);
+    }
+
+    private void EnqueueAutoPinchDelay(int delayMs, string taskName)
+    {
+      EnqueueAutoPinchTask(AutoPinchDelayTask.Create(delayMs, _getTickCount), taskName);
     }
 
     private void EnqueueAutoPinchAction(Action action, string taskName)
@@ -715,9 +738,21 @@ namespace Dagobert
       }, taskName);
     }
 
-    private void InsertAutoPinchTask(Func<bool?> task, string taskName)
+    private void InsertAutoPinchTask(
+      Func<bool?> task,
+      string taskName,
+      int timeoutMs = AutoPinchTimeoutPolicy.GeneralTaskTimeoutMs)
     {
-      _taskManager.Insert(() => _autoPinchTaskGuard.Run(task, taskName), taskName);
+      _taskManager.Insert(
+        () => _autoPinchTaskGuard.Run(task, taskName, timeoutMs),
+        AutoPinchTimeoutPolicy.GetLegacyBackstopTimeoutMs(timeoutMs),
+        true,
+        taskName);
+    }
+
+    private void InsertAutoPinchDelay(int delayMs, string taskName)
+    {
+      InsertAutoPinchTask(AutoPinchDelayTask.Create(delayMs, _getTickCount), taskName);
     }
 
     private void ExecuteCleanupActions(
@@ -753,6 +788,16 @@ namespace Dagobert
     private static void LogAutoPinchTaskException(Exception exception, string taskName)
     {
       Svc.Log.Error(exception, "Auto pinch task {TaskName} failed", taskName);
+    }
+
+    private static void LogAutoPinchTaskTimeout(TimeoutException exception, string taskName, int timeoutMs)
+    {
+      Svc.Log.Error(exception, "Auto pinch task {TaskName} timed out after {TimeoutMs} ms", taskName, timeoutMs);
+      if (Plugin.Configuration.ShowErrorsInChat)
+      {
+        var timeoutSeconds = TimeSpan.FromMilliseconds(timeoutMs).TotalSeconds;
+        Svc.Chat.PrintError($"Auto pinch stopped while waiting for {taskName} after {timeoutSeconds:N0} seconds.");
+      }
     }
 
     private static void LogAutoPinchException(Exception exception)

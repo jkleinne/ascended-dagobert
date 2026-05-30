@@ -57,6 +57,13 @@ internal static class Program
       ("AutoRetainer suppression cleanup is idempotent", AutoRetainerSuppressionCleanupIsIdempotent),
       ("AutoRetainer suppression retries failed restore", AutoRetainerSuppressionRetriesFailedRestore),
       ("AutoRetainer suppression idle cleanup waits for idle", AutoRetainerSuppressionIdleCleanupWaitsForIdle),
+      ("AutoPinch timeout policy uses general timeout", AutoPinchTimeoutPolicyUsesGeneralTimeout),
+      ("AutoPinch timeout policy uses market price timeout", AutoPinchTimeoutPolicyUsesMarketPriceTimeout),
+      ("AutoPinch timeout policy pads legacy backstop", AutoPinchTimeoutPolicyPadsLegacyBackstop),
+      ("AutoPinch delay task waits until delay elapses", AutoPinchDelayTaskWaitsUntilDelayElapses),
+      ("AutoPinch delay task treats negative delay as elapsed", AutoPinchDelayTaskTreatsNegativeDelayAsElapsed),
+      ("AutoPinch task guard reports timeout", AutoPinchTaskGuardReportsTimeout),
+      ("AutoPinch task guard resets timing after timeout", AutoPinchTaskGuardResetsTimingAfterTimeout),
       ("AutoPinch task guard leaves active session after successful task", AutoPinchTaskGuardLeavesActiveSessionAfterSuccessfulTask),
       ("AutoPinch task guard restores suppression on task exception", AutoPinchTaskGuardRestoresSuppressionOnTaskException),
       ("AutoPinch task guard preserves original exception when abort fails", AutoPinchTaskGuardPreservesOriginalExceptionWhenAbortFails),
@@ -887,11 +894,162 @@ internal static class Program
     return Task.CompletedTask;
   }
 
+  private static Task AutoPinchTimeoutPolicyUsesGeneralTimeout()
+  {
+    AssertEqual(30_000, AutoPinchTimeoutPolicy.GeneralTaskTimeoutMs, "general auto pinch timeout");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchTimeoutPolicyUsesMarketPriceTimeout()
+  {
+    AssertEqual(45_000, AutoPinchTimeoutPolicy.MarketPriceWaitTimeoutMs, "market price wait timeout");
+    AssertEqual(
+      true,
+      AutoPinchTimeoutPolicy.MarketPriceWaitTimeoutMs > AutoPinchTimeoutPolicy.GeneralTaskTimeoutMs,
+      "market price timeout exceeds general timeout");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchTimeoutPolicyPadsLegacyBackstop()
+  {
+    var legacyBackstopTimeoutMs = AutoPinchTimeoutPolicy.GetLegacyBackstopTimeoutMs(
+      AutoPinchTimeoutPolicy.MarketPriceWaitTimeoutMs);
+
+    AssertEqual(50_000, legacyBackstopTimeoutMs, "legacy backstop timeout");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchDelayTaskWaitsUntilDelayElapses()
+  {
+    var now = 1_000L;
+    var delayTask = AutoPinchDelayTask.Create(500, () => now);
+
+    AssertEqual<bool?>(false, delayTask(), "initial delay result");
+    now += 499;
+    AssertEqual<bool?>(false, delayTask(), "delay result before elapsed");
+    now += 1;
+    AssertEqual<bool?>(true, delayTask(), "delay result after elapsed");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchDelayTaskTreatsNegativeDelayAsElapsed()
+  {
+    var delayTask = AutoPinchDelayTask.Create(-1, () => 1_000L);
+
+    AssertEqual<bool?>(true, delayTask(), "negative delay result");
+    return Task.CompletedTask;
+  }
+
+  private static AutoPinchTaskGuard CreateAutoPinchTaskGuard(
+    AutoRetainerSuppressionCoordinator coordinator,
+    Action? abortTasks = null,
+    Action? removeTalkAddonListeners = null,
+    Action<Exception, string>? logException = null,
+    Action<TimeoutException, string, int>? reportTimeout = null,
+    Func<long>? getTickCount = null)
+  {
+    return new AutoPinchTaskGuard(
+      coordinator,
+      abortTasks ?? (() => { }),
+      removeTalkAddonListeners ?? (() => { }),
+      logException ?? ((_, _) => { }),
+      reportTimeout ?? ((_, _, _) => { }),
+      getTickCount ?? (() => 0));
+  }
+
+  private static bool? RunGuardedTestTask(
+    AutoPinchTaskGuard guard,
+    Func<bool?> task,
+    string taskName)
+  {
+    return guard.Run(task, taskName, AutoPinchTimeoutPolicy.GeneralTaskTimeoutMs);
+  }
+
+  private static Task AutoPinchTaskGuardReportsTimeout()
+  {
+    var now = 1_000L;
+    var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false);
+    var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
+    var abortCount = 0;
+    var listenerCleanupCount = 0;
+    TimeoutException? reportedException = null;
+    string? reportedTaskName = null;
+    int? reportedTimeoutMs = null;
+    var guard = CreateAutoPinchTaskGuard(
+      coordinator,
+      abortTasks: () => abortCount++,
+      removeTalkAddonListeners: () => listenerCleanupCount++,
+      reportTimeout: (exception, taskName, timeoutMs) =>
+      {
+        reportedException = exception;
+        reportedTaskName = taskName;
+        reportedTimeoutMs = timeoutMs;
+      },
+      getTickCount: () => now);
+
+    coordinator.BeginRun();
+
+    var firstResult = guard.Run(
+      () => false,
+      "SlowTask",
+      AutoPinchTimeoutPolicy.GeneralTaskTimeoutMs);
+    now += AutoPinchTimeoutPolicy.GeneralTaskTimeoutMs;
+    var timeoutResult = guard.Run(
+      () => false,
+      "SlowTask",
+      AutoPinchTimeoutPolicy.GeneralTaskTimeoutMs);
+
+    AssertEqual<bool?>(false, firstResult, "first slow task result");
+    AssertEqual<bool?>(null, timeoutResult, "timeout result");
+    AssertEqual(false, coordinator.HasActiveSession, "active session after timeout");
+    AssertSequenceEqual([true, false], gateway.SetValues, "set values after timeout");
+    AssertEqual(0, abortCount, "direct abort count");
+    AssertEqual(1, listenerCleanupCount, "listener cleanup count");
+    AssertEqual("SlowTask", reportedTaskName, "reported task name");
+    AssertEqual(AutoPinchTimeoutPolicy.GeneralTaskTimeoutMs, reportedTimeoutMs, "reported timeout");
+    AssertEqual(true, reportedException is not null, "reported exception exists");
+    AssertContains("SlowTask", reportedException!.Message, "timeout exception message");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchTaskGuardResetsTimingAfterTimeout()
+  {
+    var now = 0L;
+    var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false);
+    var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
+    var reportCount = 0;
+    var guard = CreateAutoPinchTaskGuard(
+      coordinator,
+      reportTimeout: (_, _, _) => reportCount++,
+      getTickCount: () => now);
+
+    coordinator.BeginRun();
+    AssertEqual<bool?>(
+      false,
+      guard.Run(() => false, "RepeatTask", AutoPinchTimeoutPolicy.GeneralTaskTimeoutMs),
+      "first repeat task result");
+    now = AutoPinchTimeoutPolicy.GeneralTaskTimeoutMs;
+    AssertEqual<bool?>(
+      null,
+      guard.Run(() => false, "RepeatTask", AutoPinchTimeoutPolicy.GeneralTaskTimeoutMs),
+      "repeat task timeout result");
+
+    coordinator.BeginRun();
+    AssertEqual<bool?>(
+      false,
+      guard.Run(() => false, "RepeatTask", AutoPinchTimeoutPolicy.GeneralTaskTimeoutMs),
+      "repeat task result after reset");
+
+    AssertEqual(1, reportCount, "timeout report count");
+    AssertSequenceEqual([true, false, true], gateway.SetValues, "set values after reset");
+    return Task.CompletedTask;
+  }
+
   private static Task AutoPinchTaskGuardLeavesActiveSessionAfterSuccessfulTask()
   {
     var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false);
     var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
-    var guard = new AutoPinchTaskGuard(
+    var guard = CreateAutoPinchTaskGuard(
       coordinator,
       abortTasks: () => throw new InvalidOperationException("abort should not run"),
       removeTalkAddonListeners: () => throw new InvalidOperationException("listener cleanup should not run"),
@@ -899,7 +1057,7 @@ internal static class Program
 
     coordinator.BeginRun();
 
-    var result = guard.Run(() => true, "SuccessfulTask");
+    var result = RunGuardedTestTask(guard, () => true, "SuccessfulTask");
 
     AssertEqual<bool?>(true, result, "guarded result");
     AssertEqual(true, coordinator.HasActiveSession, "active session after successful task");
@@ -916,7 +1074,7 @@ internal static class Program
     Exception? loggedException = null;
     string? loggedTaskName = null;
     var expectedException = new InvalidOperationException("task failed");
-    var guard = new AutoPinchTaskGuard(
+    var guard = CreateAutoPinchTaskGuard(
       coordinator,
       abortTasks: () => abortCount++,
       removeTalkAddonListeners: () => listenerCleanupCount++,
@@ -930,7 +1088,7 @@ internal static class Program
 
     try
     {
-      guard.Run(() => throw expectedException, "FailingTask");
+      RunGuardedTestTask(guard, () => throw expectedException, "FailingTask");
       throw new InvalidOperationException("expected guarded task to throw");
     }
     catch (InvalidOperationException ex) when (ReferenceEquals(ex, expectedException))
@@ -955,7 +1113,7 @@ internal static class Program
     string? loggedTaskName = null;
     var expectedException = new InvalidOperationException("task failed");
     var abortException = new InvalidOperationException("abort failed");
-    var guard = new AutoPinchTaskGuard(
+    var guard = CreateAutoPinchTaskGuard(
       coordinator,
       abortTasks: () => throw abortException,
       removeTalkAddonListeners: () => listenerCleanupCount++,
@@ -969,7 +1127,7 @@ internal static class Program
 
     try
     {
-      guard.Run(() => throw expectedException, "FailingAbortTask");
+      RunGuardedTestTask(guard, () => throw expectedException, "FailingAbortTask");
       throw new InvalidOperationException("expected guarded task to throw");
     }
     catch (InvalidOperationException ex) when (ReferenceEquals(ex, expectedException))
@@ -995,7 +1153,7 @@ internal static class Program
     var listenerCleanupCount = 0;
     Exception? loggedException = null;
     var expectedException = new InvalidOperationException("task failed");
-    var guard = new AutoPinchTaskGuard(
+    var guard = CreateAutoPinchTaskGuard(
       coordinator,
       abortTasks: () => abortCount++,
       removeTalkAddonListeners: () => listenerCleanupCount++,
@@ -1005,7 +1163,7 @@ internal static class Program
 
     try
     {
-      guard.Run(() => throw expectedException, "FailedRestoreTask");
+      RunGuardedTestTask(guard, () => throw expectedException, "FailedRestoreTask");
       throw new InvalidOperationException("expected guarded task to throw");
     }
     catch (InvalidOperationException ex) when (ReferenceEquals(ex, expectedException))
@@ -1026,7 +1184,7 @@ internal static class Program
     var gateway = new FakeAutoRetainerSuppressionGateway(initialSuppressed: false);
     var coordinator = new AutoRetainerSuppressionCoordinator(gateway);
     var expectedException = new InvalidOperationException("task failed");
-    var guard = new AutoPinchTaskGuard(
+    var guard = CreateAutoPinchTaskGuard(
       coordinator,
       abortTasks: () => { },
       removeTalkAddonListeners: () => { },
@@ -1034,7 +1192,7 @@ internal static class Program
 
     try
     {
-      guard.Run(() => throw expectedException, "InactiveSuppressionTask");
+      RunGuardedTestTask(guard, () => throw expectedException, "InactiveSuppressionTask");
       throw new InvalidOperationException("expected guarded task to throw");
     }
     catch (InvalidOperationException ex) when (ReferenceEquals(ex, expectedException))
@@ -1053,7 +1211,7 @@ internal static class Program
     var expectedException = new InvalidOperationException("task failed");
     var listenerException = new InvalidOperationException("listener cleanup failed");
     var logException = new InvalidOperationException("log failed");
-    var guard = new AutoPinchTaskGuard(
+    var guard = CreateAutoPinchTaskGuard(
       coordinator,
       abortTasks: () => { },
       removeTalkAddonListeners: () => throw listenerException,
@@ -1063,7 +1221,7 @@ internal static class Program
 
     try
     {
-      guard.Run(() => throw expectedException, "CleanupFailureTask");
+      RunGuardedTestTask(guard, () => throw expectedException, "CleanupFailureTask");
       throw new InvalidOperationException("expected guarded task to throw");
     }
     catch (InvalidOperationException ex) when (ReferenceEquals(ex, expectedException))
