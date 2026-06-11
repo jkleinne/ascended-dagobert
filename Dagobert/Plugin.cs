@@ -63,10 +63,12 @@ public sealed class Plugin : IDalamudPlugin
     _marketBoardRequestTracker = new MarketBoardRequestTracker(GameInteropProvider, Log);
     var autoRetainerSuppressionCoordinator =
       new AutoRetainerSuppressionCoordinator(new AutoRetainerIPC());
+    var recentPinchTracker = new RecentPinchTracker(() => Environment.TickCount64);
     _autoPinch = new AutoPinch(
       universalisPriceProvider,
       _marketBoardRequestTracker,
-      autoRetainerSuppressionCoordinator);
+      autoRetainerSuppressionCoordinator,
+      recentPinchTracker);
     WindowSystem.AddWindow(_autoPinch);
   }
 
