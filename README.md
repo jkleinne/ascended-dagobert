@@ -38,6 +38,14 @@ Defaults: max 2 listings, 40% tolerance, 3 recent sales, 30-day sale age.
 
 Enable `Show Pricing Debug` in the config window when you want to see why a price was selected or skipped. Debug lines appear in chat and in the plugin log, including whether Universalis was consulted, the average sale price returned, recent sale count, newest sale age, current floor, and the selected target price.
 
+### Resume After Timeout
+
+A full "Auto Pinch" run aborts when a step times out (a slow market board response, a missed context menu). Upstream restarts from the first retainer on relaunch, repeating work it already finished. This fork remembers which retainers completed a full pinch and, when relaunched within the skip window, continues with the ones that are left — the retainer that was mid-pinch when the run stopped starts over from its first item.
+
+Skipped retainers are announced in chat (names included when `Show Retainer Names` is on). If every enabled retainer was pinched within the window, the click counts as a deliberate full re-run and nothing is skipped. Progress is kept in memory only, so a plugin reload or game restart always produces a full run.
+
+Defaults: 5-minute window, configurable via "Skip Recently Pinched (minutes)" in the config window; 0 disables.
+
 ## Upstream features
 
 Inherited unchanged from upstream:

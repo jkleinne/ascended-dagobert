@@ -9,6 +9,14 @@ internal enum AutoPinchSellListWorkState
   HasItems
 }
 
+/// <summary>
+/// Result of resume-aware retainer selection: the indexes to pinch and the
+/// names skipped because they completed within the freshness window.
+/// </summary>
+internal sealed record AutoPinchResumeSelection(
+  IReadOnlyList<int> Indexes,
+  IReadOnlyList<string> SkippedRetainerNames);
+
 internal static class AutoPinchRunPlanner
 {
   internal static List<int> SelectRetainerIndexes(
@@ -30,6 +38,36 @@ internal static class AutoPinchRunPlanner
     }
 
     return indexes;
+  }
+
+  /// <summary>
+  /// Selects retainers for a run while skipping ones whose full pinch completed
+  /// within the freshness window. If skipping would leave nothing to do, the
+  /// full enabled selection returns with nothing reported as skipped, so
+  /// launching auto pinch is never a no-op.
+  /// </summary>
+  internal static AutoPinchResumeSelection SelectResumeRetainerIndexes(
+    IReadOnlyList<string> retainerNames,
+    IReadOnlySet<string> enabledRetainerNames,
+    string allDisabledSentinel,
+    IReadOnlySet<string> recentlyPinchedNames)
+  {
+    var enabledIndexes = SelectRetainerIndexes(retainerNames, enabledRetainerNames, allDisabledSentinel);
+
+    var remainingIndexes = new List<int>();
+    var skippedNames = new List<string>();
+    foreach (var index in enabledIndexes)
+    {
+      if (recentlyPinchedNames.Contains(retainerNames[index]))
+        skippedNames.Add(retainerNames[index]);
+      else
+        remainingIndexes.Add(index);
+    }
+
+    if (remainingIndexes.Count == 0)
+      return new AutoPinchResumeSelection(enabledIndexes, []);
+
+    return new AutoPinchResumeSelection(remainingIndexes, skippedNames);
   }
 
   internal static bool HasSellListItems(int itemCount)
