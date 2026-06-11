@@ -102,6 +102,15 @@ public sealed class Configuration : IPluginConfiguration
 
   public bool DontUseTTS { get; set; } = false;
 
+  /// <summary>
+  /// When a full auto pinch run completes a retainer, relaunching auto pinch
+  /// within this many minutes skips that retainer, so a run aborted by a
+  /// timeout resumes where it failed instead of starting over. 0 disables the
+  /// skip. If every enabled retainer is within the window, the run pinches all
+  /// of them again (a deliberate full re-run).
+  /// </summary>
+  public int SkipRecentlyPinchedMinutes { get; set; } = 5;
+
   public List<ulong> SeenRetainers { get; set; } = [];
 
   /// <summary>

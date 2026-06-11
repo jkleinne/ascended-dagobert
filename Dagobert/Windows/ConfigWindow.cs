@@ -157,6 +157,24 @@ public sealed class ConfigWindow : Window
       ImGui.EndTooltip();
     }
 
+    int skipRecentlyPinchedMinutes = Plugin.Configuration.SkipRecentlyPinchedMinutes;
+    ImGui.BeginGroup();
+    ImGui.Text("Skip Recently Pinched (minutes)");
+    if (ImGui.InputInt("##skipRecentlyPinchedMinutes", ref skipRecentlyPinchedMinutes))
+    {
+      Plugin.Configuration.SkipRecentlyPinchedMinutes = Math.Max(0, skipRecentlyPinchedMinutes);
+      Plugin.Configuration.Save();
+    }
+    ImGui.EndGroup();
+    if (ImGui.IsItemHovered())
+    {
+      ImGui.BeginTooltip();
+      ImGui.SetTooltip("After a full auto pinch run finishes a retainer, relaunching auto pinch within this many\r\n" +
+                       "minutes skips that retainer. Lets a run that stopped on a timeout resume where it failed.\r\n" +
+                       "0 disables. If every retainer was pinched recently, the run pinches all of them again.");
+      ImGui.EndTooltip();
+    }
+
     bool chatErrors = Plugin.Configuration.ShowErrorsInChat;
     if (ImGui.Checkbox("Show errors in chat", ref chatErrors))
     {

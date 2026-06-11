@@ -86,6 +86,7 @@ internal static class Program
       ("AutoPinch run planner resume runs all when every retainer is fresh", AutoPinchRunPlannerResumeRunsAllWhenEveryRetainerIsFresh),
       ("AutoPinch run planner resume keeps sentinel disabling all retainers", AutoPinchRunPlannerResumeKeepsSentinelDisablingAllRetainers),
       ("AutoPinch run planner resume ignores recent names outside enabled selection", AutoPinchRunPlannerResumeIgnoresRecentNamesOutsideEnabledSelection),
+      ("Skip recently pinched minutes defaults to five minutes", SkipRecentlyPinchedMinutesDefaultsToFiveMinutes),
       ("AutoRetainer IPC state skips missing plugin read", AutoRetainerIpcStateSkipsMissingPluginRead),
       ("AutoRetainer IPC state skips missing plugin write", AutoRetainerIpcStateSkipsMissingPluginWrite),
       ("AutoRetainer IPC state reports read failure", AutoRetainerIpcStateReportsReadFailure),
@@ -162,6 +163,14 @@ internal static class Program
     AssertEqual(true, config.EnableThinMarketSaleReferenceFallback, "missing legacy fallback keeps default");
     AssertEqual(40.0f, config.ThinMarketSaleReferenceTolerancePercent, "missing legacy tolerance keeps default");
     AssertEqual(false, config.HasLegacyThinMarketSaleReferenceSettings, "missing legacy config leaves no legacy values");
+    return Task.CompletedTask;
+  }
+
+  private static Task SkipRecentlyPinchedMinutesDefaultsToFiveMinutes()
+  {
+    var config = JsonConvert.DeserializeObject<Configuration>("""{"Version": 2}""");
+
+    AssertEqual(5, config!.SkipRecentlyPinchedMinutes, "default skip recently pinched minutes");
     return Task.CompletedTask;
   }
 
