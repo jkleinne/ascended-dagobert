@@ -13,6 +13,7 @@
     <Compile Include="../Dagobert/AutoPinchDelayTask.cs" Link="Production/AutoPinchDelayTask.cs" />
     <Compile Include="../Dagobert/AutoPinchTimeoutPolicy.cs" Link="Production/AutoPinchTimeoutPolicy.cs" />
     <Compile Include="../Dagobert/AutoPinchRunPlanner.cs" Link="Production/AutoPinchRunPlanner.cs" />
+    <Compile Include="../Dagobert/RecentPinchTracker.cs" Link="Production/RecentPinchTracker.cs" />
     <Compile Include="../Dagobert/AutoPinchCleanupPlan.cs" Link="Production/AutoPinchCleanupPlan.cs" />
     <Compile Include="../Dagobert/AutoRetainerSuppression.cs" Link="Production/AutoRetainerSuppression.cs" />
     <Compile Include="../Dagobert/AutoRetainerIpcState.cs" Link="Production/AutoRetainerIpcState.cs" />

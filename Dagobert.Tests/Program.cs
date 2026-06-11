@@ -76,6 +76,12 @@ internal static class Program
       ("AutoPinch run planner returns no retainers when configured names are missing", AutoPinchRunPlannerReturnsNoRetainersWhenConfiguredNamesAreMissing),
       ("AutoPinch run planner detects sell list work", AutoPinchRunPlannerDetectsSellListWork),
       ("AutoPinch run planner treats empty sell list differently by entry point", AutoPinchRunPlannerTreatsEmptySellListDifferentlyByEntryPoint),
+      ("Recent pinch tracker reports names within window", RecentPinchTrackerReportsNamesWithinWindow),
+      ("Recent pinch tracker expires names after window", RecentPinchTrackerExpiresNamesAfterWindow),
+      ("Recent pinch tracker isolates characters", RecentPinchTrackerIsolatesCharacters),
+      ("Recent pinch tracker treats zero window as disabled", RecentPinchTrackerTreatsZeroWindowAsDisabled),
+      ("Recent pinch tracker handles max window without overflow", RecentPinchTrackerHandlesMaxWindowWithoutOverflow),
+      ("Recent pinch tracker skip window sanitizes configured minutes", RecentPinchTrackerSkipWindowSanitizesConfiguredMinutes),
       ("AutoRetainer IPC state skips missing plugin read", AutoRetainerIpcStateSkipsMissingPluginRead),
       ("AutoRetainer IPC state skips missing plugin write", AutoRetainerIpcStateSkipsMissingPluginWrite),
       ("AutoRetainer IPC state reports read failure", AutoRetainerIpcStateReportsReadFailure),
@@ -937,6 +943,78 @@ internal static class Program
     var delayTask = AutoPinchDelayTask.Create(-1, () => 1_000L);
 
     AssertEqual<bool?>(true, delayTask(), "negative delay result");
+    return Task.CompletedTask;
+  }
+
+  private static Task RecentPinchTrackerReportsNamesWithinWindow()
+  {
+    var now = 10_000L;
+    var tracker = new RecentPinchTracker(() => now);
+    tracker.MarkPinched(new RetainerPinchKey(1, "Alpha"));
+
+    now += 299_000;
+    var recent = tracker.GetRecentlyPinchedNames(1, ["Alpha", "Beta"], TimeSpan.FromMinutes(5));
+
+    AssertEqual(true, recent.Contains("Alpha"), "alpha within window");
+    AssertEqual(false, recent.Contains("Beta"), "beta never pinched");
+    AssertEqual(0, tracker.GetRecentlyPinchedNames(1, [], TimeSpan.FromMinutes(5)).Count, "empty name list");
+    return Task.CompletedTask;
+  }
+
+  private static Task RecentPinchTrackerExpiresNamesAfterWindow()
+  {
+    var now = 10_000L;
+    var tracker = new RecentPinchTracker(() => now);
+    tracker.MarkPinched(new RetainerPinchKey(1, "Alpha"));
+
+    now += 300_000;
+    var atBoundary = tracker.GetRecentlyPinchedNames(1, ["Alpha"], TimeSpan.FromMinutes(5));
+    AssertEqual(true, atBoundary.Contains("Alpha"), "alpha at inclusive window boundary");
+
+    now += 1;
+    var afterWindow = tracker.GetRecentlyPinchedNames(1, ["Alpha"], TimeSpan.FromMinutes(5));
+    AssertEqual(0, afterWindow.Count, "recent names after window");
+    return Task.CompletedTask;
+  }
+
+  private static Task RecentPinchTrackerIsolatesCharacters()
+  {
+    var tracker = new RecentPinchTracker(() => 10_000L);
+    tracker.MarkPinched(new RetainerPinchKey(1, "Alpha"));
+
+    var recent = tracker.GetRecentlyPinchedNames(2, ["Alpha"], TimeSpan.FromMinutes(5));
+
+    AssertEqual(0, recent.Count, "recent names for other character");
+    return Task.CompletedTask;
+  }
+
+  private static Task RecentPinchTrackerTreatsZeroWindowAsDisabled()
+  {
+    var tracker = new RecentPinchTracker(() => 10_000L);
+    tracker.MarkPinched(new RetainerPinchKey(1, "Alpha"));
+
+    var recent = tracker.GetRecentlyPinchedNames(1, ["Alpha"], TimeSpan.Zero);
+
+    AssertEqual(0, recent.Count, "recent names with zero window");
+    return Task.CompletedTask;
+  }
+
+  private static Task RecentPinchTrackerHandlesMaxWindowWithoutOverflow()
+  {
+    var tracker = new RecentPinchTracker(() => 0L);
+    tracker.MarkPinched(new RetainerPinchKey(1, "Alpha"));
+
+    var recent = tracker.GetRecentlyPinchedNames(1, ["Alpha"], RecentPinchTracker.GetSkipWindow(int.MaxValue));
+
+    AssertEqual(true, recent.Contains("Alpha"), "alpha with max window");
+    return Task.CompletedTask;
+  }
+
+  private static Task RecentPinchTrackerSkipWindowSanitizesConfiguredMinutes()
+  {
+    AssertEqual(TimeSpan.Zero, RecentPinchTracker.GetSkipWindow(-5), "negative minutes window");
+    AssertEqual(TimeSpan.FromMinutes(5), RecentPinchTracker.GetSkipWindow(5), "default minutes window");
+    AssertEqual(TimeSpan.FromMinutes(int.MaxValue), RecentPinchTracker.GetSkipWindow(int.MaxValue), "max minutes window");
     return Task.CompletedTask;
   }
 
