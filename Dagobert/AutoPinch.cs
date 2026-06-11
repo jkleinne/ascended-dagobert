@@ -244,7 +244,7 @@ namespace Dagobert
         var retainers = retainerList.Retainers;
         
         var retainerNames = retainers.Select(retainer => retainer.Name).ToArray();
-        var characterContentId = Svc.ClientState.LocalContentId;
+        var characterContentId = Svc.PlayerState.ContentId;
         var skipWindow = RecentPinchTracker.GetSkipWindow(Plugin.Configuration.SkipRecentlyPinchedMinutes);
         var recentlyPinchedNames = _recentPinchTracker.GetRecentlyPinchedNames(
           characterContentId,
