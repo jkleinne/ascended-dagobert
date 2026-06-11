@@ -82,6 +82,10 @@ internal static class Program
       ("Recent pinch tracker treats zero window as disabled", RecentPinchTrackerTreatsZeroWindowAsDisabled),
       ("Recent pinch tracker handles max window without overflow", RecentPinchTrackerHandlesMaxWindowWithoutOverflow),
       ("Recent pinch tracker skip window sanitizes configured minutes", RecentPinchTrackerSkipWindowSanitizesConfiguredMinutes),
+      ("AutoPinch run planner resume skips recently pinched retainers", AutoPinchRunPlannerResumeSkipsRecentlyPinchedRetainers),
+      ("AutoPinch run planner resume runs all when every retainer is fresh", AutoPinchRunPlannerResumeRunsAllWhenEveryRetainerIsFresh),
+      ("AutoPinch run planner resume keeps sentinel disabling all retainers", AutoPinchRunPlannerResumeKeepsSentinelDisablingAllRetainers),
+      ("AutoPinch run planner resume ignores recent names outside enabled selection", AutoPinchRunPlannerResumeIgnoresRecentNamesOutsideEnabledSelection),
       ("AutoRetainer IPC state skips missing plugin read", AutoRetainerIpcStateSkipsMissingPluginRead),
       ("AutoRetainer IPC state skips missing plugin write", AutoRetainerIpcStateSkipsMissingPluginWrite),
       ("AutoRetainer IPC state reports read failure", AutoRetainerIpcStateReportsReadFailure),
@@ -1381,6 +1385,58 @@ internal static class Program
     AssertEqual(false, AutoPinchRunPlanner.ShouldCompleteSelectedRetainerTask(unavailable), "unavailable selected retainer task");
     AssertEqual(true, AutoPinchRunPlanner.ShouldCompleteSelectedRetainerTask(empty), "empty selected retainer task");
     AssertEqual(true, AutoPinchRunPlanner.ShouldCompleteSelectedRetainerTask(hasItems), "non empty selected retainer task");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchRunPlannerResumeSkipsRecentlyPinchedRetainers()
+  {
+    var selection = AutoPinchRunPlanner.SelectResumeRetainerIndexes(
+      ["Alpha", "Beta", "Gamma"],
+      new HashSet<string>(),
+      TestAllDisabledSentinel,
+      new HashSet<string> { "Beta" });
+
+    AssertSequenceEqual([0, 2], selection.Indexes, "resume retainer indexes");
+    AssertSequenceEqual(["Beta"], selection.SkippedRetainerNames, "skipped retainer names");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchRunPlannerResumeRunsAllWhenEveryRetainerIsFresh()
+  {
+    var selection = AutoPinchRunPlanner.SelectResumeRetainerIndexes(
+      ["Alpha", "Beta"],
+      new HashSet<string>(),
+      TestAllDisabledSentinel,
+      new HashSet<string> { "Alpha", "Beta" });
+
+    AssertSequenceEqual([0, 1], selection.Indexes, "all-fresh retainer indexes");
+    AssertSequenceEqual([], selection.SkippedRetainerNames, "all-fresh skipped names");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchRunPlannerResumeKeepsSentinelDisablingAllRetainers()
+  {
+    var selection = AutoPinchRunPlanner.SelectResumeRetainerIndexes(
+      ["Alpha", "Beta"],
+      new HashSet<string> { TestAllDisabledSentinel },
+      TestAllDisabledSentinel,
+      new HashSet<string> { "Alpha" });
+
+    AssertSequenceEqual([], selection.Indexes, "sentinel retainer indexes");
+    AssertSequenceEqual([], selection.SkippedRetainerNames, "sentinel skipped names");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchRunPlannerResumeIgnoresRecentNamesOutsideEnabledSelection()
+  {
+    var selection = AutoPinchRunPlanner.SelectResumeRetainerIndexes(
+      ["Alpha", "Beta"],
+      new HashSet<string> { "Alpha" },
+      TestAllDisabledSentinel,
+      new HashSet<string> { "Beta" });
+
+    AssertSequenceEqual([0], selection.Indexes, "enabled-only retainer indexes");
+    AssertSequenceEqual([], selection.SkippedRetainerNames, "enabled-only skipped names");
     return Task.CompletedTask;
   }
 
