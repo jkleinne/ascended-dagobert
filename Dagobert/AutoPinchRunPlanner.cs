@@ -43,8 +43,8 @@ internal static class AutoPinchRunPlanner
   /// <summary>
   /// Selects retainers for a run while skipping ones whose full pinch completed
   /// within the freshness window. If skipping would leave nothing to do, the
-  /// click means a deliberate full re-run, so the unfiltered selection returns
-  /// with nothing reported as skipped.
+  /// full enabled selection returns with nothing reported as skipped, so
+  /// launching auto pinch is never a no-op.
   /// </summary>
   internal static AutoPinchResumeSelection SelectResumeRetainerIndexes(
     IReadOnlyList<string> retainerNames,
@@ -54,20 +54,20 @@ internal static class AutoPinchRunPlanner
   {
     var enabledIndexes = SelectRetainerIndexes(retainerNames, enabledRetainerNames, allDisabledSentinel);
 
-    var staleIndexes = new List<int>();
+    var remainingIndexes = new List<int>();
     var skippedNames = new List<string>();
     foreach (var index in enabledIndexes)
     {
       if (recentlyPinchedNames.Contains(retainerNames[index]))
         skippedNames.Add(retainerNames[index]);
       else
-        staleIndexes.Add(index);
+        remainingIndexes.Add(index);
     }
 
-    if (staleIndexes.Count == 0)
+    if (remainingIndexes.Count == 0)
       return new AutoPinchResumeSelection(enabledIndexes, []);
 
-    return new AutoPinchResumeSelection(staleIndexes, skippedNames);
+    return new AutoPinchResumeSelection(remainingIndexes, skippedNames);
   }
 
   internal static bool HasSellListItems(int itemCount)

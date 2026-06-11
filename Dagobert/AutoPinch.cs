@@ -292,6 +292,9 @@ namespace Dagobert
       EnqueueAutoPinchTask(
         () => AutoPinchRunPlanner.ShouldCompleteSelectedRetainerTask(EnqueueAllRetainerItems(InsertSingleItem, true)),
         $"EnqueueAllRetainerItems{index}");
+      // Item tasks are inserted ahead of this queue position at runtime, so the
+      // mark fires only after every item completes; a timeout abort clears the
+      // queue first and intentionally leaves this retainer unmarked.
       EnqueueAutoPinchAction(() => _recentPinchTracker.MarkPinched(pinchKey), $"MarkRetainerPinched{index}");
       EnqueueAutoPinchDelay(500, $"DelayAfterRetainerItems{index}");
       EnqueueAutoPinchTask(CloseRetainerSellList, $"CloseRetainerSellList{index}");
