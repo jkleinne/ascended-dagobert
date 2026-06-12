@@ -90,6 +90,8 @@ internal static class Program
       ("Menu entry matcher falls back to suffix for payload prefixes", MenuEntryMatcherFallsBackToSuffixForPayloadPrefixes),
       ("Menu entry matcher prefers exact over suffix match", MenuEntryMatcherPrefersExactOverSuffixMatch),
       ("Menu entry matcher tries candidate labels in order", MenuEntryMatcherTriesCandidateLabelsInOrder),
+      ("Menu entry matcher returns null for empty menu", MenuEntryMatcherReturnsNullForEmptyMenu),
+      ("Menu entry matcher prefers first matching candidate label", MenuEntryMatcherPrefersFirstMatchingCandidateLabel),
       ("Sale history step status skips before completion check", SaleHistoryStepStatusSkipsBeforeCompletionCheck),
       ("Sale history step status completes finished step", SaleHistoryStepStatusCompletesFinishedStep),
       ("Sale history step status waits before deadline", SaleHistoryStepStatusWaitsBeforeDeadline),
@@ -1468,6 +1470,22 @@ internal static class Program
       null,
       AutoPinchRunPlanner.FindFirstMenuEntryIndex(entryTexts, []),
       "no labels yields no match");
+    return Task.CompletedTask;
+  }
+
+  private static Task MenuEntryMatcherReturnsNullForEmptyMenu()
+  {
+    AssertEqual<int?>(null, AutoPinchRunPlanner.FindMenuEntryIndex([], TestSaleHistoryLabel), "matched entry index");
+    return Task.CompletedTask;
+  }
+
+  private static Task MenuEntryMatcherPrefersFirstMatchingCandidateLabel()
+  {
+    var index = AutoPinchRunPlanner.FindFirstMenuEntryIndex(
+      ["Sell items in your retainer's inventory on the market.", "Sell items in your inventory on the market."],
+      ["Sell items in your inventory on the market.", "Sell items in your retainer's inventory on the market."]);
+
+    AssertEqual<int?>(1, index, "matched entry index");
     return Task.CompletedTask;
   }
 
