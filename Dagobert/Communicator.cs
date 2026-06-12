@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using Dalamud.Game.Text.SeStringHandling;
@@ -12,6 +13,8 @@ namespace Dagobert;
 public static class Communicator
 {
   private static readonly ExcelSheet<Item> ItemSheet = Svc.Data.GetExcelSheet<Item>();
+
+  private const ushort RetainerNameHighlightColor = 561;
 
   public static void PrintPriceUpdate(string itemName, int? oldPrice, int? newPrice, float cutPercentage)
   {
@@ -149,9 +152,31 @@ public static class Communicator
 
     var seString = new SeStringBuilder()
         .AddText("Now Pinching items of retainer: ")
-        .AddUiForeground(name, 561)
+        .AddUiForeground(name, RetainerNameHighlightColor)
         .Build();
     Svc.Chat.Print(seString);
+  }
+
+  public static void PrintRecentlyPinchedSkipped(IReadOnlyList<string> skippedRetainerNames)
+  {
+    if (skippedRetainerNames.Count == 0)
+      return;
+
+    var builder = new SeStringBuilder()
+        .AddText($"Auto pinch: skipping {skippedRetainerNames.Count} recently pinched retainer{(skippedRetainerNames.Count == 1 ? "" : "s")}");
+
+    if (Plugin.Configuration.ShowRetainerNames)
+    {
+      builder.AddText(": ");
+      for (var i = 0; i < skippedRetainerNames.Count; i++)
+      {
+        if (i > 0)
+          builder.AddText(", ");
+        builder.AddUiForeground(skippedRetainerNames[i], RetainerNameHighlightColor);
+      }
+    }
+
+    Svc.Chat.Print(builder.Build());
   }
 
   public static void PrintNoPriceToSetError(string itemName)

@@ -97,6 +97,19 @@ internal static class Program
       ("Sale history step status waits before deadline", SaleHistoryStepStatusWaitsBeforeDeadline),
       ("Sale history step status expires at deadline", SaleHistoryStepStatusExpiresAtDeadline),
       ("Sale history step deadline stays below guard timeout", SaleHistoryStepDeadlineStaysBelowGuardTimeout),
+      ("Recent pinch tracker reports names within window", RecentPinchTrackerReportsNamesWithinWindow),
+      ("Recent pinch tracker expires names after window", RecentPinchTrackerExpiresNamesAfterWindow),
+      ("Recent pinch tracker isolates characters", RecentPinchTrackerIsolatesCharacters),
+      ("Recent pinch tracker treats zero window as disabled", RecentPinchTrackerTreatsZeroWindowAsDisabled),
+      ("Recent pinch tracker handles max window without overflow", RecentPinchTrackerHandlesMaxWindowWithoutOverflow),
+      ("Recent pinch tracker skip window sanitizes configured minutes", RecentPinchTrackerSkipWindowSanitizesConfiguredMinutes),
+      ("Recent pinch tracker refreshes completion on re-mark", RecentPinchTrackerRefreshesCompletionOnReMark),
+      ("AutoPinch run planner resume skips recently pinched retainers", AutoPinchRunPlannerResumeSkipsRecentlyPinchedRetainers),
+      ("AutoPinch run planner resume runs all when every retainer is fresh", AutoPinchRunPlannerResumeRunsAllWhenEveryRetainerIsFresh),
+      ("AutoPinch run planner resume keeps sentinel disabling all retainers", AutoPinchRunPlannerResumeKeepsSentinelDisablingAllRetainers),
+      ("AutoPinch run planner resume ignores recent names outside enabled selection", AutoPinchRunPlannerResumeIgnoresRecentNamesOutsideEnabledSelection),
+      ("AutoPinch run planner resume with empty recent set selects all enabled", AutoPinchRunPlannerResumeWithEmptyRecentSetSelectsAllEnabled),
+      ("Skip recently pinched minutes defaults to five minutes", SkipRecentlyPinchedMinutesDefaultsToFiveMinutes),
       ("AutoRetainer IPC state skips missing plugin read", AutoRetainerIpcStateSkipsMissingPluginRead),
       ("AutoRetainer IPC state skips missing plugin write", AutoRetainerIpcStateSkipsMissingPluginWrite),
       ("AutoRetainer IPC state reports read failure", AutoRetainerIpcStateReportsReadFailure),
@@ -197,6 +210,14 @@ internal static class Program
       ?? throw new InvalidOperationException("expected config to round-trip");
 
     AssertEqual(true, roundTripped.OpenSaleHistoryDuringAutoPinch, "open sale history round trip");
+    return Task.CompletedTask;
+  }
+
+  private static Task SkipRecentlyPinchedMinutesDefaultsToFiveMinutes()
+  {
+    var config = JsonConvert.DeserializeObject<Configuration>("""{"Version": 2}""");
+
+    AssertEqual(5, config!.SkipRecentlyPinchedMinutes, "default skip recently pinched minutes");
     return Task.CompletedTask;
   }
 
@@ -985,6 +1006,94 @@ internal static class Program
     return Task.CompletedTask;
   }
 
+  private static Task RecentPinchTrackerReportsNamesWithinWindow()
+  {
+    var now = 10_000L;
+    var tracker = new RecentPinchTracker(() => now);
+    tracker.MarkPinched(new RetainerPinchKey(1, "Alpha"));
+
+    now += 299_000;
+    var recent = tracker.GetRecentlyPinchedNames(1, ["Alpha", "Beta"], TimeSpan.FromMinutes(5));
+
+    AssertEqual(true, recent.Contains("Alpha"), "alpha within window");
+    AssertEqual(false, recent.Contains("Beta"), "beta never pinched");
+    AssertEqual(0, tracker.GetRecentlyPinchedNames(1, [], TimeSpan.FromMinutes(5)).Count, "empty name list");
+    return Task.CompletedTask;
+  }
+
+  private static Task RecentPinchTrackerExpiresNamesAfterWindow()
+  {
+    var now = 10_000L;
+    var tracker = new RecentPinchTracker(() => now);
+    tracker.MarkPinched(new RetainerPinchKey(1, "Alpha"));
+
+    now += 300_000;
+    var atBoundary = tracker.GetRecentlyPinchedNames(1, ["Alpha"], TimeSpan.FromMinutes(5));
+    AssertEqual(true, atBoundary.Contains("Alpha"), "alpha at inclusive window boundary");
+
+    now += 1;
+    var afterWindow = tracker.GetRecentlyPinchedNames(1, ["Alpha"], TimeSpan.FromMinutes(5));
+    AssertEqual(0, afterWindow.Count, "recent names after window");
+    return Task.CompletedTask;
+  }
+
+  private static Task RecentPinchTrackerIsolatesCharacters()
+  {
+    var tracker = new RecentPinchTracker(() => 10_000L);
+    tracker.MarkPinched(new RetainerPinchKey(1, "Alpha"));
+
+    var recent = tracker.GetRecentlyPinchedNames(2, ["Alpha"], TimeSpan.FromMinutes(5));
+
+    AssertEqual(0, recent.Count, "recent names for other character");
+    return Task.CompletedTask;
+  }
+
+  private static Task RecentPinchTrackerTreatsZeroWindowAsDisabled()
+  {
+    var tracker = new RecentPinchTracker(() => 10_000L);
+    tracker.MarkPinched(new RetainerPinchKey(1, "Alpha"));
+
+    var recent = tracker.GetRecentlyPinchedNames(1, ["Alpha"], TimeSpan.Zero);
+
+    AssertEqual(0, recent.Count, "recent names with zero window");
+    return Task.CompletedTask;
+  }
+
+  private static Task RecentPinchTrackerHandlesMaxWindowWithoutOverflow()
+  {
+    var tracker = new RecentPinchTracker(() => 0L);
+    tracker.MarkPinched(new RetainerPinchKey(1, "Alpha"));
+
+    var recent = tracker.GetRecentlyPinchedNames(1, ["Alpha"], RecentPinchTracker.GetSkipWindow(int.MaxValue));
+
+    AssertEqual(true, recent.Contains("Alpha"), "alpha with max window");
+    return Task.CompletedTask;
+  }
+
+  private static Task RecentPinchTrackerSkipWindowSanitizesConfiguredMinutes()
+  {
+    AssertEqual(TimeSpan.Zero, RecentPinchTracker.GetSkipWindow(-5), "negative minutes window");
+    AssertEqual(TimeSpan.FromMinutes(5), RecentPinchTracker.GetSkipWindow(5), "default minutes window");
+    AssertEqual(TimeSpan.FromMinutes(int.MaxValue), RecentPinchTracker.GetSkipWindow(int.MaxValue), "max minutes window");
+    return Task.CompletedTask;
+  }
+
+  private static Task RecentPinchTrackerRefreshesCompletionOnReMark()
+  {
+    var now = 10_000L;
+    var tracker = new RecentPinchTracker(() => now);
+    tracker.MarkPinched(new RetainerPinchKey(1, "Alpha"));
+
+    now += 250_000;
+    tracker.MarkPinched(new RetainerPinchKey(1, "Alpha"));
+
+    now += 250_000;
+    var recent = tracker.GetRecentlyPinchedNames(1, ["Alpha"], TimeSpan.FromMinutes(5));
+
+    AssertEqual(true, recent.Contains("Alpha"), "alpha fresh from re-mark past original window");
+    return Task.CompletedTask;
+  }
+
   private static AutoPinchTaskGuard CreateAutoPinchTaskGuard(
     AutoRetainerSuppressionCoordinator coordinator,
     Action? abortTasks = null,
@@ -1547,6 +1656,71 @@ internal static class Program
       true,
       AutoPinchTimeoutPolicy.SaleHistoryStepDeadlineMs < AutoPinchTimeoutPolicy.GeneralTaskTimeoutMs,
       "sale history deadline below guard timeout");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchRunPlannerResumeSkipsRecentlyPinchedRetainers()
+  {
+    var selection = AutoPinchRunPlanner.SelectResumeRetainerIndexes(
+      ["Alpha", "Beta", "Gamma"],
+      new HashSet<string>(),
+      TestAllDisabledSentinel,
+      new HashSet<string> { "Beta" });
+
+    AssertSequenceEqual([0, 2], selection.Indexes, "resume retainer indexes");
+    AssertSequenceEqual(["Beta"], selection.SkippedRetainerNames, "skipped retainer names");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchRunPlannerResumeRunsAllWhenEveryRetainerIsFresh()
+  {
+    var selection = AutoPinchRunPlanner.SelectResumeRetainerIndexes(
+      ["Alpha", "Beta"],
+      new HashSet<string>(),
+      TestAllDisabledSentinel,
+      new HashSet<string> { "Alpha", "Beta" });
+
+    AssertSequenceEqual([0, 1], selection.Indexes, "all-fresh retainer indexes");
+    AssertSequenceEqual([], selection.SkippedRetainerNames, "all-fresh skipped names");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchRunPlannerResumeKeepsSentinelDisablingAllRetainers()
+  {
+    var selection = AutoPinchRunPlanner.SelectResumeRetainerIndexes(
+      ["Alpha", "Beta"],
+      new HashSet<string> { TestAllDisabledSentinel },
+      TestAllDisabledSentinel,
+      new HashSet<string> { "Alpha" });
+
+    AssertSequenceEqual([], selection.Indexes, "sentinel retainer indexes");
+    AssertSequenceEqual([], selection.SkippedRetainerNames, "sentinel skipped names");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchRunPlannerResumeIgnoresRecentNamesOutsideEnabledSelection()
+  {
+    var selection = AutoPinchRunPlanner.SelectResumeRetainerIndexes(
+      ["Alpha", "Beta"],
+      new HashSet<string> { "Alpha" },
+      TestAllDisabledSentinel,
+      new HashSet<string> { "Beta" });
+
+    AssertSequenceEqual([0], selection.Indexes, "enabled-only retainer indexes");
+    AssertSequenceEqual([], selection.SkippedRetainerNames, "enabled-only skipped names");
+    return Task.CompletedTask;
+  }
+
+  private static Task AutoPinchRunPlannerResumeWithEmptyRecentSetSelectsAllEnabled()
+  {
+    var selection = AutoPinchRunPlanner.SelectResumeRetainerIndexes(
+      ["Alpha", "Beta"],
+      new HashSet<string>(),
+      TestAllDisabledSentinel,
+      new HashSet<string>());
+
+    AssertSequenceEqual([0, 1], selection.Indexes, "empty recent set retainer indexes");
+    AssertSequenceEqual([], selection.SkippedRetainerNames, "empty recent set skipped names");
     return Task.CompletedTask;
   }
 

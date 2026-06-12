@@ -37,6 +37,7 @@ namespace Dagobert
     private readonly TaskManager _taskManager;
     private readonly AutoRetainerSuppressionCoordinator _autoRetainerSuppressionCoordinator;
     private readonly AutoPinchTaskGuard _autoPinchTaskGuard;
+    private readonly RecentPinchTracker _recentPinchTracker;
     private readonly Func<long> _getTickCount;
     private bool _hasTalkAddonListeners;
     private Dictionary<string, int?> _cachedPrices = [];
@@ -56,7 +57,8 @@ namespace Dagobert
     public AutoPinch(
       ISaleReferenceProvider saleReferenceProvider,
       MarketBoardRequestTracker marketBoardRequestTracker,
-      AutoRetainerSuppressionCoordinator autoRetainerSuppressionCoordinator)
+      AutoRetainerSuppressionCoordinator autoRetainerSuppressionCoordinator,
+      RecentPinchTracker recentPinchTracker)
       : base("Ascended Dagobert", ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.AlwaysUseWindowPadding | ImGuiWindowFlags.AlwaysAutoResize, true)
     {
       _mbHandler = new MarketBoardHandler(
@@ -81,6 +83,7 @@ namespace Dagobert
         AbortOnTimeout = true
       };
       _autoRetainerSuppressionCoordinator = autoRetainerSuppressionCoordinator;
+      _recentPinchTracker = recentPinchTracker;
       _getTickCount = () => Environment.TickCount64;
       _autoPinchTaskGuard = new AutoPinchTaskGuard(
         autoRetainerSuppressionCoordinator,
@@ -262,26 +265,37 @@ namespace Dagobert
         var retainers = retainerList.Retainers;
         
         var retainerNames = retainers.Select(retainer => retainer.Name).ToArray();
-        var retainerIndexes = AutoPinchRunPlanner.SelectRetainerIndexes(
+        var characterContentId = Svc.PlayerState.ContentId;
+        var skipWindow = RecentPinchTracker.GetSkipWindow(Plugin.Configuration.SkipRecentlyPinchedMinutes);
+        var recentlyPinchedNames = _recentPinchTracker.GetRecentlyPinchedNames(
+          characterContentId,
+          retainerNames,
+          skipWindow);
+        var selection = AutoPinchRunPlanner.SelectResumeRetainerIndexes(
           retainerNames,
           Plugin.Configuration.EnabledRetainerNames,
-          Configuration.ALL_DISABLED_SENTINEL);
+          Configuration.ALL_DISABLED_SENTINEL,
+          recentlyPinchedNames);
 
-        if (retainerIndexes.Count == 0 && Plugin.Configuration.EnabledRetainerNames.Contains(Configuration.ALL_DISABLED_SENTINEL))
+        if (selection.Indexes.Count == 0 && Plugin.Configuration.EnabledRetainerNames.Contains(Configuration.ALL_DISABLED_SENTINEL))
         {
           Communicator.PrintAllRetainersDisabled();
           return;
         }
 
-        if (retainerIndexes.Count == 0)
+        if (selection.Indexes.Count == 0)
           return;
+
+        Communicator.PrintRecentlyPinchedSkipped(selection.SkippedRetainerNames);
 
         RegisterTalkAddonListeners();
         _autoRetainerSuppressionCoordinator.BeginRun();
 
-        foreach (var retainerIndex in retainerIndexes)
+        foreach (var retainerIndex in selection.Indexes)
         {
-          EnqueueSingleRetainer(retainerIndex, retainerNames[retainerIndex]);
+          EnqueueSingleRetainer(
+            retainerIndex,
+            new RetainerPinchKey(characterContentId, retainerNames[retainerIndex]));
         }
 
         EnqueueAutoPinchAction(RemoveTalkAddonListeners, nameof(RemoveTalkAddonListeners));
@@ -290,7 +304,7 @@ namespace Dagobert
       }
     }
 
-    private void EnqueueSingleRetainer(int index, string retainerName)
+    private void EnqueueSingleRetainer(int index, RetainerPinchKey pinchKey)
     {
       EnqueueAutoPinchTask(() => ClickRetainer(index), $"ClickRetainer{index}");
       EnqueueAutoPinchDelay(100, $"DelayAfterClickRetainer{index}");
@@ -299,10 +313,14 @@ namespace Dagobert
       EnqueueAutoPinchTask(
         () => AutoPinchRunPlanner.ShouldCompleteSelectedRetainerTask(EnqueueAllRetainerItems(InsertSingleItem, true)),
         $"EnqueueAllRetainerItems{index}");
+      // Item tasks are inserted ahead of this queue position at runtime, so the
+      // mark fires only after every item completes; a timeout abort clears the
+      // queue first and intentionally leaves this retainer unmarked.
+      EnqueueAutoPinchAction(() => _recentPinchTracker.MarkPinched(pinchKey), $"MarkRetainerPinched{index}");
       EnqueueAutoPinchDelay(500, $"DelayAfterRetainerItems{index}");
       EnqueueAutoPinchTask(CloseRetainerSellList, $"CloseRetainerSellList{index}");
       EnqueueAutoPinchDelay(100, $"DelayAfterCloseRetainerSellList{index}");
-      EnqueueSaleHistoryVisit(index, retainerName);
+      EnqueueSaleHistoryVisit(index, pinchKey.RetainerName);
       EnqueueAutoPinchTask(CloseRetainer, $"CloseRetainer{index}");
       EnqueueAutoPinchDelay(100, $"DelayAfterCloseRetainer{index}");
     }
