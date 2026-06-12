@@ -22,6 +22,9 @@ using System.Linq;
 using System.Speech.Synthesis;
 using Dalamud.Game.Text.SeStringHandling;
 using static ECommons.UIHelpers.AtkReaderImplementations.ReaderContextMenu;
+// Type alias rather than a namespace using: Lumina.Excel.Sheets also exports common
+// identifiers (Action, Item, ...) that collide with System types used in this file.
+using Addon = Lumina.Excel.Sheets.Addon;
 
 namespace Dagobert
 {
@@ -43,6 +46,15 @@ namespace Dagobert
     private const uint ComparePricesButtonNodeId = 4;
     private const int ComparePricesCallbackId = 4;
     private const int LegacyDirectTaskTimeoutMs = 10_000;
+    private const int SaleHistoryDwellMs = 500;
+    private const int SaleHistoryUiSettleDelayMs = 100;
+    private const uint ViewSaleHistoryAddonRowId = 2382;
+    private const string RetainerHistoryAddonName = "RetainerHistory";
+    private const uint SellItemsPlayerInventoryAddonRowId = 2380;
+    private const uint SellItemsRetainerInventoryAddonRowId = 2381;
+    private const int FallbackSellItemsEntryIndex = 2;
+    private readonly IReadOnlyList<string> _sellItemsLabels;
+    private readonly string? _saleHistoryLabel;
 
     public AutoPinch(
       ISaleReferenceProvider saleReferenceProvider,
@@ -82,6 +94,17 @@ namespace Dagobert
         LogAutoPinchTaskException,
         LogAutoPinchTaskTimeout,
         _getTickCount);
+      _saleHistoryLabel = ResolveAddonSheetText(ViewSaleHistoryAddonRowId);
+      if (_saleHistoryLabel is null)
+        Svc.Log.Warning(
+          "Could not resolve the sale history menu label from Addon sheet row {RowId}; sale history visits are disabled this session",
+          ViewSaleHistoryAddonRowId);
+      _sellItemsLabels = ResolveSellItemsLabels();
+      if (_sellItemsLabels.Count == 0)
+        Svc.Log.Warning(
+          "Could not resolve the sell items menu label from Addon sheet rows {PlayerInventoryRowId} and {RetainerInventoryRowId}; falling back to the fixed menu position",
+          SellItemsPlayerInventoryAddonRowId,
+          SellItemsRetainerInventoryAddonRowId);
       // Fails on non-windows
       try
       {
@@ -299,6 +322,7 @@ namespace Dagobert
       EnqueueAutoPinchDelay(500, $"DelayAfterRetainerItems{index}");
       EnqueueAutoPinchTask(CloseRetainerSellList, $"CloseRetainerSellList{index}");
       EnqueueAutoPinchDelay(100, $"DelayAfterCloseRetainerSellList{index}");
+      EnqueueSaleHistoryVisit(index, pinchKey.RetainerName);
       EnqueueAutoPinchTask(CloseRetainer, $"CloseRetainer{index}");
       EnqueueAutoPinchDelay(100, $"DelayAfterCloseRetainer{index}");
     }
@@ -315,11 +339,23 @@ namespace Dagobert
         return false;
     }
 
-    private static unsafe bool? ClickSellItems()
+    private unsafe bool? ClickSellItems()
     {
       if (GenericHelpers.TryGetAddonByName<AtkUnitBase>("SelectString", out var addon) && GenericHelpers.IsAddonReady(addon))
       {
-        new AddonMaster.SelectString(addon).Entries[2].Select();
+        var entries = new AddonMaster.SelectString(addon).Entries;
+        var entryTexts = entries.Select(entry => entry.Text).ToArray();
+        var entryIndex = AutoPinchRunPlanner.FindFirstMenuEntryIndex(entryTexts, _sellItemsLabels);
+        if (entryIndex is null)
+        {
+          Svc.Log.Warning(
+            "No sell items entry matched the Addon sheet labels (entries: {Entries}); falling back to menu position {FallbackIndex}",
+            string.Join(" | ", entryTexts),
+            FallbackSellItemsEntryIndex);
+          entryIndex = FallbackSellItemsEntryIndex;
+        }
+
+        entries[entryIndex.Value].Select();
         return true;
       }
       else
@@ -346,6 +382,167 @@ namespace Dagobert
       }
       else
         return false;
+    }
+
+    private static string? ResolveAddonSheetText(uint rowId)
+    {
+      try
+      {
+        if (!Svc.Data.GetExcelSheet<Addon>().TryGetRow(rowId, out var row))
+          return null;
+
+        var text = row.Text.GetText();
+        return string.IsNullOrWhiteSpace(text) ? null : text;
+      }
+      catch (Exception ex)
+      {
+        Svc.Log.Warning(ex, "Failed to read Addon sheet row {RowId}", rowId);
+        return null;
+      }
+    }
+
+    private static IReadOnlyList<string> ResolveSellItemsLabels()
+    {
+      var labels = new List<string>();
+      foreach (var rowId in new[] { SellItemsPlayerInventoryAddonRowId, SellItemsRetainerInventoryAddonRowId })
+      {
+        var label = ResolveAddonSheetText(rowId);
+        if (label is not null)
+          labels.Add(label);
+      }
+
+      return labels;
+    }
+
+    private void EnqueueSaleHistoryVisit(int index, string retainerName)
+    {
+      var steps = AutoPinchRunPlanner.PlanSaleHistorySteps(
+        Plugin.Configuration.OpenSaleHistoryDuringAutoPinch,
+        _saleHistoryLabel);
+      if (steps.Count == 0)
+        return;
+
+      var visit = new SaleHistoryVisit();
+      foreach (var step in steps)
+        EnqueueSaleHistoryStep(visit, step, index, retainerName);
+    }
+
+    private void EnqueueSaleHistoryStep(SaleHistoryVisit visit, SaleHistoryStep step, int index, string retainerName)
+    {
+      switch (step)
+      {
+        case SaleHistoryStep.OpenSaleHistory:
+          EnqueueSaleHistoryTask(visit, () => TryOpenSaleHistory(visit, retainerName), $"OpenSaleHistory{index}", retainerName);
+          break;
+        case SaleHistoryStep.DelayAfterOpenSaleHistory:
+          EnqueueSaleHistoryDelay(visit, SaleHistoryUiSettleDelayMs, $"DelayAfterOpenSaleHistory{index}", retainerName);
+          break;
+        case SaleHistoryStep.WaitForRetainerHistory:
+          EnqueueSaleHistoryTask(visit, IsRetainerHistoryReady, $"WaitForRetainerHistory{index}", retainerName);
+          break;
+        case SaleHistoryStep.DwellOnSaleHistory:
+          EnqueueSaleHistoryDelay(visit, SaleHistoryDwellMs, $"DwellOnSaleHistory{index}", retainerName);
+          break;
+        case SaleHistoryStep.CloseSaleHistory:
+          EnqueueSaleHistoryTask(visit, CloseSaleHistoryWindow, $"CloseSaleHistory{index}", retainerName);
+          break;
+        case SaleHistoryStep.DelayAfterCloseSaleHistory:
+          EnqueueSaleHistoryDelay(visit, SaleHistoryUiSettleDelayMs, $"DelayAfterCloseSaleHistory{index}", retainerName);
+          break;
+        default:
+          throw new ArgumentOutOfRangeException(nameof(step), step, null);
+      }
+    }
+
+    private void EnqueueSaleHistoryTask(SaleHistoryVisit visit, Func<bool> runStep, string taskName, string retainerName)
+    {
+      EnqueueAutoPinchTask(CreateSaleHistoryStepTask(visit, runStep, taskName, retainerName), taskName);
+    }
+
+    private void EnqueueSaleHistoryDelay(SaleHistoryVisit visit, int delayMs, string taskName, string retainerName)
+    {
+      var delay = AutoPinchDelayTask.Create(delayMs, _getTickCount);
+      EnqueueSaleHistoryTask(visit, () => delay() == true, taskName, retainerName);
+    }
+
+    private Func<bool?> CreateSaleHistoryStepTask(SaleHistoryVisit visit, Func<bool> runStep, string taskName, string retainerName)
+    {
+      long? startedAt = null;
+      return () =>
+      {
+        var now = _getTickCount();
+        startedAt ??= now;
+        var isStepComplete = !visit.Skipped && runStep();
+        var status = AutoPinchRunPlanner.GetSaleHistoryStepStatus(
+          visit.Skipped,
+          isStepComplete,
+          startedAt.Value,
+          now,
+          AutoPinchTimeoutPolicy.SaleHistoryStepDeadlineMs);
+
+        switch (status)
+        {
+          case SaleHistoryStepStatus.Skipped:
+          case SaleHistoryStepStatus.Complete:
+            return true;
+          case SaleHistoryStepStatus.KeepWaiting:
+            return false;
+          case SaleHistoryStepStatus.DeadlineExceeded:
+            AbandonSaleHistoryVisit(visit, taskName, retainerName);
+            return true;
+          default:
+            throw new ArgumentOutOfRangeException(nameof(status), status, null);
+        }
+      };
+    }
+
+    private unsafe bool TryOpenSaleHistory(SaleHistoryVisit visit, string retainerName)
+    {
+      if (!GenericHelpers.TryGetAddonByName<AtkUnitBase>("SelectString", out var addon) || !GenericHelpers.IsAddonReady(addon))
+        return false;
+
+      var entries = new AddonMaster.SelectString(addon).Entries;
+      var entryTexts = entries.Select(entry => entry.Text).ToArray();
+      // PlanSaleHistorySteps only emits steps when the label resolved, so _saleHistoryLabel is non-null here.
+      var entryIndex = AutoPinchRunPlanner.FindMenuEntryIndex(entryTexts, _saleHistoryLabel!);
+      if (entryIndex is null)
+      {
+        visit.Skipped = true;
+        Svc.Log.Warning(
+          "Retainer {RetainerName} menu has no \"{Label}\" entry (entries: {Entries}); skipping sale history for this retainer",
+          retainerName,
+          _saleHistoryLabel,
+          string.Join(" | ", entryTexts));
+        return true;
+      }
+
+      entries[entryIndex.Value].Select();
+      return true;
+    }
+
+    private static unsafe bool IsRetainerHistoryReady()
+    {
+      return GenericHelpers.TryGetAddonByName<AtkUnitBase>(RetainerHistoryAddonName, out var addon)
+        && GenericHelpers.IsAddonReady(addon);
+    }
+
+    private static unsafe bool CloseSaleHistoryWindow()
+    {
+      if (GenericHelpers.TryGetAddonByName<AtkUnitBase>(RetainerHistoryAddonName, out var addon))
+        addon->Close(true);
+
+      return true;
+    }
+
+    private void AbandonSaleHistoryVisit(SaleHistoryVisit visit, string taskName, string retainerName)
+    {
+      visit.Skipped = true;
+      Svc.Log.Warning(
+        "Sale history step {TaskName} for retainer {RetainerName} exceeded its {DeadlineMs} ms deadline; skipping sale history for this retainer",
+        taskName,
+        retainerName,
+        AutoPinchTimeoutPolicy.SaleHistoryStepDeadlineMs);
+      CloseSaleHistoryWindow();
     }
 
     private unsafe void PinchAllRetainerItems()
@@ -927,6 +1124,15 @@ namespace Dagobert
       _pricingDebugDetail = null;
       _skipCurrentItem = false;
       _loggedMarketPriceWait = false;
+    }
+
+    /// <summary>
+    /// Per-retainer soft-fail marker for the sale history visit. Each retainer's step
+    /// closures share one instance, so a skip never leaks into the next retainer.
+    /// </summary>
+    private sealed class SaleHistoryVisit
+    {
+      internal bool Skipped;
     }
   }
 }

@@ -9,6 +9,8 @@ namespace Dagobert.Tests;
 internal static class Program
 {
   private const string TestAllDisabledSentinel = "__ALL_DISABLED__";
+  private const string TestSaleHistoryLabel = "View sale history.";
+  private const string GuiPayloadGlyph = "\uE06F";
 
   public static async Task<int> Main()
   {
@@ -18,6 +20,8 @@ internal static class Program
       ("No price reason explains every thin market skip reason", NoPriceReasonExplainsEveryThinMarketSkipReason),
       ("Legacy thin market config migrates to sale reference names", LegacyThinMarketConfigMigratesToSaleReferenceNames),
       ("Missing legacy thin market config keeps sale reference defaults", MissingLegacyThinMarketConfigKeepsSaleReferenceDefaults),
+      ("Open sale history config defaults to off", OpenSaleHistoryConfigDefaultsToOff),
+      ("Open sale history config round-trips through serialization", OpenSaleHistoryConfigRoundTripsThroughSerialization),
       ("No price reason explains market board request failure", NoPriceReasonExplainsMarketBoardRequestFailure),
       ("No price reason explains missing eligible listings", NoPriceReasonExplainsMissingEligibleListings),
       ("No price reason explains duplicate response", NoPriceReasonExplainsDuplicateResponse),
@@ -76,6 +80,23 @@ internal static class Program
       ("AutoPinch run planner returns no retainers when configured names are missing", AutoPinchRunPlannerReturnsNoRetainersWhenConfiguredNamesAreMissing),
       ("AutoPinch run planner detects sell list work", AutoPinchRunPlannerDetectsSellListWork),
       ("AutoPinch run planner treats empty sell list differently by entry point", AutoPinchRunPlannerTreatsEmptySellListDifferentlyByEntryPoint),
+      ("Sale history plan is empty when toggle is off", SaleHistoryPlanIsEmptyWhenToggleIsOff),
+      ("Sale history plan is empty without resolved label", SaleHistoryPlanIsEmptyWithoutResolvedLabel),
+      ("Sale history plan lists visit steps in order", SaleHistoryPlanListsVisitStepsInOrder),
+      ("Menu entry matcher finds exact entry", MenuEntryMatcherFindsExactEntry),
+      ("Menu entry matcher returns null for missing entry", MenuEntryMatcherReturnsNullForMissingEntry),
+      ("Menu entry matcher survives extra leading entries", MenuEntryMatcherSurvivesExtraLeadingEntries),
+      ("Menu entry matcher falls back to trimmed comparison", MenuEntryMatcherFallsBackToTrimmedComparison),
+      ("Menu entry matcher falls back to suffix for payload prefixes", MenuEntryMatcherFallsBackToSuffixForPayloadPrefixes),
+      ("Menu entry matcher prefers exact over suffix match", MenuEntryMatcherPrefersExactOverSuffixMatch),
+      ("Menu entry matcher tries candidate labels in order", MenuEntryMatcherTriesCandidateLabelsInOrder),
+      ("Menu entry matcher returns null for empty menu", MenuEntryMatcherReturnsNullForEmptyMenu),
+      ("Menu entry matcher prefers first matching candidate label", MenuEntryMatcherPrefersFirstMatchingCandidateLabel),
+      ("Sale history step status skips before completion check", SaleHistoryStepStatusSkipsBeforeCompletionCheck),
+      ("Sale history step status completes finished step", SaleHistoryStepStatusCompletesFinishedStep),
+      ("Sale history step status waits before deadline", SaleHistoryStepStatusWaitsBeforeDeadline),
+      ("Sale history step status expires at deadline", SaleHistoryStepStatusExpiresAtDeadline),
+      ("Sale history step deadline stays below guard timeout", SaleHistoryStepDeadlineStaysBelowGuardTimeout),
       ("Recent pinch tracker reports names within window", RecentPinchTrackerReportsNamesWithinWindow),
       ("Recent pinch tracker expires names after window", RecentPinchTrackerExpiresNamesAfterWindow),
       ("Recent pinch tracker isolates characters", RecentPinchTrackerIsolatesCharacters),
@@ -165,6 +186,30 @@ internal static class Program
     AssertEqual(true, config.EnableThinMarketSaleReferenceFallback, "missing legacy fallback keeps default");
     AssertEqual(40.0f, config.ThinMarketSaleReferenceTolerancePercent, "missing legacy tolerance keeps default");
     AssertEqual(false, config.HasLegacyThinMarketSaleReferenceSettings, "missing legacy config leaves no legacy values");
+    return Task.CompletedTask;
+  }
+
+  private static Task OpenSaleHistoryConfigDefaultsToOff()
+  {
+    var config = JsonConvert.DeserializeObject<Configuration>(
+      """
+      {
+        "Version": 2
+      }
+      """) ?? throw new InvalidOperationException("expected config to deserialize");
+
+    AssertEqual(false, config.OpenSaleHistoryDuringAutoPinch, "open sale history default");
+    return Task.CompletedTask;
+  }
+
+  private static Task OpenSaleHistoryConfigRoundTripsThroughSerialization()
+  {
+    var config = new Configuration { OpenSaleHistoryDuringAutoPinch = true };
+
+    var roundTripped = JsonConvert.DeserializeObject<Configuration>(JsonConvert.SerializeObject(config))
+      ?? throw new InvalidOperationException("expected config to round-trip");
+
+    AssertEqual(true, roundTripped.OpenSaleHistoryDuringAutoPinch, "open sale history round trip");
     return Task.CompletedTask;
   }
 
@@ -1412,6 +1457,205 @@ internal static class Program
     AssertEqual(false, AutoPinchRunPlanner.ShouldCompleteSelectedRetainerTask(unavailable), "unavailable selected retainer task");
     AssertEqual(true, AutoPinchRunPlanner.ShouldCompleteSelectedRetainerTask(empty), "empty selected retainer task");
     AssertEqual(true, AutoPinchRunPlanner.ShouldCompleteSelectedRetainerTask(hasItems), "non empty selected retainer task");
+    return Task.CompletedTask;
+  }
+
+  private static Task SaleHistoryPlanIsEmptyWhenToggleIsOff()
+  {
+    var steps = AutoPinchRunPlanner.PlanSaleHistorySteps(
+      isSaleHistoryVisitEnabled: false,
+      saleHistoryLabel: TestSaleHistoryLabel);
+
+    AssertSequenceEqual([], steps, "sale history steps");
+    return Task.CompletedTask;
+  }
+
+  private static Task SaleHistoryPlanIsEmptyWithoutResolvedLabel()
+  {
+    AssertSequenceEqual(
+      [],
+      AutoPinchRunPlanner.PlanSaleHistorySteps(isSaleHistoryVisitEnabled: true, saleHistoryLabel: null),
+      "sale history steps for null label");
+    AssertSequenceEqual(
+      [],
+      AutoPinchRunPlanner.PlanSaleHistorySteps(isSaleHistoryVisitEnabled: true, saleHistoryLabel: "  "),
+      "sale history steps for blank label");
+    return Task.CompletedTask;
+  }
+
+  private static Task SaleHistoryPlanListsVisitStepsInOrder()
+  {
+    var steps = AutoPinchRunPlanner.PlanSaleHistorySteps(
+      isSaleHistoryVisitEnabled: true,
+      saleHistoryLabel: TestSaleHistoryLabel);
+
+    AssertSequenceEqual(
+      [
+        SaleHistoryStep.OpenSaleHistory,
+        SaleHistoryStep.DelayAfterOpenSaleHistory,
+        SaleHistoryStep.WaitForRetainerHistory,
+        SaleHistoryStep.DwellOnSaleHistory,
+        SaleHistoryStep.CloseSaleHistory,
+        SaleHistoryStep.DelayAfterCloseSaleHistory
+      ],
+      steps,
+      "sale history steps");
+    return Task.CompletedTask;
+  }
+
+  private static Task MenuEntryMatcherFindsExactEntry()
+  {
+    var index = AutoPinchRunPlanner.FindMenuEntryIndex(
+      ["Entrust or withdraw items.", "Entrust or withdraw gil.", "Sell items in your inventory on the market.", TestSaleHistoryLabel, "Quit."],
+      TestSaleHistoryLabel);
+
+    AssertEqual<int?>(3, index, "matched entry index");
+    return Task.CompletedTask;
+  }
+
+  private static Task MenuEntryMatcherReturnsNullForMissingEntry()
+  {
+    var index = AutoPinchRunPlanner.FindMenuEntryIndex(
+      ["Entrust or withdraw items.", "Quit."],
+      TestSaleHistoryLabel);
+
+    AssertEqual<int?>(null, index, "matched entry index");
+    return Task.CompletedTask;
+  }
+
+  private static Task MenuEntryMatcherSurvivesExtraLeadingEntries()
+  {
+    var index = AutoPinchRunPlanner.FindMenuEntryIndex(
+      ["View venture report. (Complete)", "Entrust or withdraw items.", "Entrust or withdraw gil.", "Sell items in your inventory on the market.", TestSaleHistoryLabel, "Quit."],
+      TestSaleHistoryLabel);
+
+    AssertEqual<int?>(4, index, "matched entry index");
+    return Task.CompletedTask;
+  }
+
+  private static Task MenuEntryMatcherFallsBackToTrimmedComparison()
+  {
+    var index = AutoPinchRunPlanner.FindMenuEntryIndex(
+      ["Quit.", " View sale history. "],
+      TestSaleHistoryLabel);
+
+    AssertEqual<int?>(1, index, "matched entry index");
+    return Task.CompletedTask;
+  }
+
+  private static Task MenuEntryMatcherFallsBackToSuffixForPayloadPrefixes()
+  {
+    // The leading character stands in for an evaluated <Gui(...)/> payload glyph left on the live entry text.
+    var index = AutoPinchRunPlanner.FindMenuEntryIndex(
+      [GuiPayloadGlyph + "Sell items in your inventory on the market.", "Quit."],
+      "Sell items in your inventory on the market.");
+
+    AssertEqual<int?>(0, index, "matched entry index");
+    return Task.CompletedTask;
+  }
+
+  private static Task MenuEntryMatcherPrefersExactOverSuffixMatch()
+  {
+    // The leading glyph placeholder simulates a <Gui(63)/> SeString payload prefix that
+    // makes the entry a suffix match only — the second entry is the exact match.
+    var index = AutoPinchRunPlanner.FindMenuEntryIndex(
+      [GuiPayloadGlyph + TestSaleHistoryLabel, TestSaleHistoryLabel],
+      TestSaleHistoryLabel);
+
+    AssertEqual<int?>(1, index, "matched entry index");
+    return Task.CompletedTask;
+  }
+
+  private static Task MenuEntryMatcherTriesCandidateLabelsInOrder()
+  {
+    var entryTexts = new[] { "Entrust or withdraw items.", "Sell items in your retainer's inventory on the market." };
+
+    var index = AutoPinchRunPlanner.FindFirstMenuEntryIndex(
+      entryTexts,
+      ["Sell items in your inventory on the market.", "Sell items in your retainer's inventory on the market."]);
+
+    AssertEqual<int?>(1, index, "matched entry index");
+    AssertEqual<int?>(
+      null,
+      AutoPinchRunPlanner.FindFirstMenuEntryIndex(entryTexts, []),
+      "no labels yields no match");
+    return Task.CompletedTask;
+  }
+
+  private static Task MenuEntryMatcherReturnsNullForEmptyMenu()
+  {
+    AssertEqual<int?>(null, AutoPinchRunPlanner.FindMenuEntryIndex([], TestSaleHistoryLabel), "matched entry index");
+    return Task.CompletedTask;
+  }
+
+  private static Task MenuEntryMatcherPrefersFirstMatchingCandidateLabel()
+  {
+    var index = AutoPinchRunPlanner.FindFirstMenuEntryIndex(
+      ["Sell items in your retainer's inventory on the market.", "Sell items in your inventory on the market."],
+      ["Sell items in your inventory on the market.", "Sell items in your retainer's inventory on the market."]);
+
+    AssertEqual<int?>(1, index, "matched entry index");
+    return Task.CompletedTask;
+  }
+
+  private static Task SaleHistoryStepStatusSkipsBeforeCompletionCheck()
+  {
+    var status = AutoPinchRunPlanner.GetSaleHistoryStepStatus(
+      isVisitSkipped: true,
+      isStepComplete: true,
+      startedAtTicks: 0,
+      nowTicks: 99_999,
+      deadlineMs: 10_000);
+
+    AssertEqual(SaleHistoryStepStatus.Skipped, status, "step status");
+    return Task.CompletedTask;
+  }
+
+  private static Task SaleHistoryStepStatusCompletesFinishedStep()
+  {
+    var status = AutoPinchRunPlanner.GetSaleHistoryStepStatus(
+      isVisitSkipped: false,
+      isStepComplete: true,
+      startedAtTicks: 0,
+      nowTicks: 99_999,
+      deadlineMs: 10_000);
+
+    AssertEqual(SaleHistoryStepStatus.Complete, status, "step status");
+    return Task.CompletedTask;
+  }
+
+  private static Task SaleHistoryStepStatusWaitsBeforeDeadline()
+  {
+    var status = AutoPinchRunPlanner.GetSaleHistoryStepStatus(
+      isVisitSkipped: false,
+      isStepComplete: false,
+      startedAtTicks: 0,
+      nowTicks: 9_999,
+      deadlineMs: 10_000);
+
+    AssertEqual(SaleHistoryStepStatus.KeepWaiting, status, "step status");
+    return Task.CompletedTask;
+  }
+
+  private static Task SaleHistoryStepStatusExpiresAtDeadline()
+  {
+    var status = AutoPinchRunPlanner.GetSaleHistoryStepStatus(
+      isVisitSkipped: false,
+      isStepComplete: false,
+      startedAtTicks: 0,
+      nowTicks: 10_000,
+      deadlineMs: 10_000);
+
+    AssertEqual(SaleHistoryStepStatus.DeadlineExceeded, status, "step status");
+    return Task.CompletedTask;
+  }
+
+  private static Task SaleHistoryStepDeadlineStaysBelowGuardTimeout()
+  {
+    AssertEqual(
+      true,
+      AutoPinchTimeoutPolicy.SaleHistoryStepDeadlineMs < AutoPinchTimeoutPolicy.GeneralTaskTimeoutMs,
+      "sale history deadline below guard timeout");
     return Task.CompletedTask;
   }
 

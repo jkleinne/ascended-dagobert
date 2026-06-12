@@ -45,6 +45,14 @@ A full "Auto Pinch" run aborts when a step times out (a slow market board respon
 Skipped retainers are announced in chat (names included when `Show Retainer Names` is on). If every enabled retainer was pinched within the window, the click counts as a deliberate full re-run and nothing is skipped. Progress is kept in memory only, so a plugin reload or game restart always produces a full run.
 
 Defaults: 5-minute window, configurable via "Skip Recently Pinched (minutes)" in the config window; 0 disables.
+### Sale History Visit
+
+When "Open Sale History During Auto Pinch" is enabled in the config (off by default), a
+full auto-pinch run briefly opens each retainer's sale history window before moving on.
+Sale-tracking plugins that listen for the sale history packet can then record completed
+sales without you opening the window manually on every retainer. The visit adds roughly
+one second per retainer and never interrupts the run: if the window cannot be opened,
+that retainer is skipped with a warning in the plugin log.
 
 ## Upstream features
 

@@ -90,6 +90,13 @@ public sealed class Configuration : IPluginConfiguration
 
   public bool ShowRetainerNames { get; set; } = true;
 
+  /// <summary>
+  /// Opens each enabled retainer's sale history window during a full auto pinch run
+  /// so passive sale-tracking plugins can capture the sale history packet.
+  /// Default off because the visit adds window flicker and roughly one second per retainer.
+  /// </summary>
+  public bool OpenSaleHistoryDuringAutoPinch { get; set; } = false;
+
   public bool TTSWhenAllDone { get; set; } = false;
 
   public string TTSWhenAllDoneMsg { get; set; } = "Finished auto pinching all retainers";
