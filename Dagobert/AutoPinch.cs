@@ -16,13 +16,15 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Common.Math;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Dalamud.Bindings.ImGui;
-using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Speech.Synthesis;
 using Dalamud.Game.Text.SeStringHandling;
 using static ECommons.UIHelpers.AtkReaderImplementations.ReaderContextMenu;
+// Type alias rather than a namespace using: Lumina.Excel.Sheets also exports common
+// identifiers (Action, Item, ...) that collide with System types used in this file.
+using Addon = Lumina.Excel.Sheets.Addon;
 
 namespace Dagobert
 {
