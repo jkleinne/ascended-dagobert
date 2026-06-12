@@ -157,6 +157,27 @@ internal static class AutoPinchRunPlanner
     return SaleHistoryStepStatus.KeepWaiting;
   }
 
+  /// <summary>
+  /// Tries each candidate label in order. The retainer menu's sell entry text varies by
+  /// inventory source (Addon sheet rows 2380/2381), so callers pass every plausible label.
+  /// First-match-wins is safe only because the menu shows a single sell entry per context:
+  /// both rows share the suffix "inventory on the market.", so a menu showing both at once
+  /// could suffix-match the wrong row. Re-check before reordering or adding candidates.
+  /// </summary>
+  internal static int? FindFirstMenuEntryIndex(
+    IReadOnlyList<string> entryTexts,
+    IReadOnlyList<string> labels)
+  {
+    foreach (var label in labels)
+    {
+      var index = FindMenuEntryIndex(entryTexts, label);
+      if (index is not null)
+        return index;
+    }
+
+    return null;
+  }
+
   private static List<int> SelectAllIndexes(int count)
   {
     var indexes = new List<int>(count);

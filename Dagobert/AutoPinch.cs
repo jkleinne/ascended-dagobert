@@ -47,6 +47,10 @@ namespace Dagobert
     private const int SaleHistoryUiSettleDelayMs = 100;
     private const uint ViewSaleHistoryAddonRowId = 2382;
     private const string RetainerHistoryAddonName = "RetainerHistory";
+    private const uint SellItemsPlayerInventoryAddonRowId = 2380;
+    private const uint SellItemsRetainerInventoryAddonRowId = 2381;
+    private const int FallbackSellItemsEntryIndex = 2;
+    private readonly IReadOnlyList<string> _sellItemsLabels;
     private readonly string? _saleHistoryLabel;
 
     public AutoPinch(
@@ -90,6 +94,12 @@ namespace Dagobert
         Svc.Log.Warning(
           "Could not resolve the sale history menu label from Addon sheet row {RowId}; sale history visits are disabled this session",
           ViewSaleHistoryAddonRowId);
+      _sellItemsLabels = ResolveSellItemsLabels();
+      if (_sellItemsLabels.Count == 0)
+        Svc.Log.Warning(
+          "Could not resolve the sell items menu label from Addon sheet rows {PlayerInventoryRowId} and {RetainerInventoryRowId}; falling back to the fixed menu position",
+          SellItemsPlayerInventoryAddonRowId,
+          SellItemsRetainerInventoryAddonRowId);
       // Fails on non-windows
       try
       {
@@ -309,11 +319,23 @@ namespace Dagobert
         return false;
     }
 
-    private static unsafe bool? ClickSellItems()
+    private unsafe bool? ClickSellItems()
     {
       if (GenericHelpers.TryGetAddonByName<AtkUnitBase>("SelectString", out var addon) && GenericHelpers.IsAddonReady(addon))
       {
-        new AddonMaster.SelectString(addon).Entries[2].Select();
+        var entries = new AddonMaster.SelectString(addon).Entries;
+        var entryTexts = entries.Select(entry => entry.Text).ToArray();
+        var entryIndex = AutoPinchRunPlanner.FindFirstMenuEntryIndex(entryTexts, _sellItemsLabels);
+        if (entryIndex is null)
+        {
+          Svc.Log.Warning(
+            "No sell items entry matched the Addon sheet labels (entries: {Entries}); falling back to menu position {FallbackIndex}",
+            string.Join(" | ", entryTexts),
+            FallbackSellItemsEntryIndex);
+          entryIndex = FallbackSellItemsEntryIndex;
+        }
+
+        entries[entryIndex.Value].Select();
         return true;
       }
       else
@@ -357,6 +379,19 @@ namespace Dagobert
         Svc.Log.Warning(ex, "Failed to read Addon sheet row {RowId}", rowId);
         return null;
       }
+    }
+
+    private static IReadOnlyList<string> ResolveSellItemsLabels()
+    {
+      var labels = new List<string>();
+      foreach (var rowId in new[] { SellItemsPlayerInventoryAddonRowId, SellItemsRetainerInventoryAddonRowId })
+      {
+        var label = ResolveAddonSheetText(rowId);
+        if (label is not null)
+          labels.Add(label);
+      }
+
+      return labels;
     }
 
     private void EnqueueSaleHistoryVisit(int index, string retainerName)
