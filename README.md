@@ -38,6 +38,15 @@ Defaults: max 2 listings, 40% tolerance, 3 recent sales, 30-day sale age.
 
 Enable `Show Pricing Debug` in the config window when you want to see why a price was selected or skipped. Debug lines appear in chat and in the plugin log, including whether Universalis was consulted, the average sale price returned, recent sale count, newest sale age, current floor, and the selected target price.
 
+### Sale History Visit
+
+When "Open Sale History During Auto Pinch" is enabled in the config (off by default), a
+full auto-pinch run briefly opens each retainer's sale history window before moving on.
+Sale-tracking plugins that listen for the sale history packet can then record completed
+sales without you opening the window manually on every retainer. The visit adds roughly
+one second per retainer and never interrupts the run: if the window cannot be opened,
+that retainer is skipped with a warning in the plugin log.
+
 ## Upstream features
 
 Inherited unchanged from upstream:
