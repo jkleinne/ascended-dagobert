@@ -18,6 +18,8 @@ internal static class Program
       ("No price reason explains every thin market skip reason", NoPriceReasonExplainsEveryThinMarketSkipReason),
       ("Legacy thin market config migrates to sale reference names", LegacyThinMarketConfigMigratesToSaleReferenceNames),
       ("Missing legacy thin market config keeps sale reference defaults", MissingLegacyThinMarketConfigKeepsSaleReferenceDefaults),
+      ("Open sale history config defaults to off", OpenSaleHistoryConfigDefaultsToOff),
+      ("Open sale history config round-trips through serialization", OpenSaleHistoryConfigRoundTripsThroughSerialization),
       ("No price reason explains market board request failure", NoPriceReasonExplainsMarketBoardRequestFailure),
       ("No price reason explains missing eligible listings", NoPriceReasonExplainsMissingEligibleListings),
       ("No price reason explains duplicate response", NoPriceReasonExplainsDuplicateResponse),
@@ -152,6 +154,30 @@ internal static class Program
     AssertEqual(true, config.EnableThinMarketSaleReferenceFallback, "missing legacy fallback keeps default");
     AssertEqual(40.0f, config.ThinMarketSaleReferenceTolerancePercent, "missing legacy tolerance keeps default");
     AssertEqual(false, config.HasLegacyThinMarketSaleReferenceSettings, "missing legacy config leaves no legacy values");
+    return Task.CompletedTask;
+  }
+
+  private static Task OpenSaleHistoryConfigDefaultsToOff()
+  {
+    var config = JsonConvert.DeserializeObject<Configuration>(
+      """
+      {
+        "Version": 2
+      }
+      """) ?? throw new InvalidOperationException("expected config to deserialize");
+
+    AssertEqual(false, config.OpenSaleHistoryDuringAutoPinch, "open sale history default");
+    return Task.CompletedTask;
+  }
+
+  private static Task OpenSaleHistoryConfigRoundTripsThroughSerialization()
+  {
+    var config = new Configuration { OpenSaleHistoryDuringAutoPinch = true };
+
+    var roundTripped = JsonConvert.DeserializeObject<Configuration>(JsonConvert.SerializeObject(config))
+      ?? throw new InvalidOperationException("expected config to round-trip");
+
+    AssertEqual(true, roundTripped.OpenSaleHistoryDuringAutoPinch, "open sale history round trip");
     return Task.CompletedTask;
   }
 

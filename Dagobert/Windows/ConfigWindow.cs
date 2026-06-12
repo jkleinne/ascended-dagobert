@@ -210,6 +210,19 @@ public sealed class ConfigWindow : Window
       ImGui.SetTooltip("If enabled, when pinching all retainers, the name of the retainer will be printed in the chat.");
       ImGui.EndTooltip();
     }
+    bool openSaleHistory = Plugin.Configuration.OpenSaleHistoryDuringAutoPinch;
+    if (ImGui.Checkbox("Open Sale History During Auto Pinch", ref openSaleHistory))
+    {
+      Plugin.Configuration.OpenSaleHistoryDuringAutoPinch = openSaleHistory;
+      Plugin.Configuration.Save();
+    }
+    if (ImGui.IsItemHovered())
+    {
+      ImGui.BeginTooltip();
+      ImGui.SetTooltip("If enabled, briefly opens each retainer's sale history window when auto pinching all retainers,\r\n" +
+                       "so sale-tracking plugins can record completed sales. Adds roughly 1 second per retainer.");
+      ImGui.EndTooltip();
+    }
 
 
     ImGui.Separator();
