@@ -109,7 +109,7 @@ internal static class Program
       ("AutoPinch run planner resume keeps sentinel disabling all retainers", AutoPinchRunPlannerResumeKeepsSentinelDisablingAllRetainers),
       ("AutoPinch run planner resume ignores recent names outside enabled selection", AutoPinchRunPlannerResumeIgnoresRecentNamesOutsideEnabledSelection),
       ("AutoPinch run planner resume with empty recent set selects all enabled", AutoPinchRunPlannerResumeWithEmptyRecentSetSelectsAllEnabled),
-      ("Skip recently pinched minutes defaults to five minutes", SkipRecentlyPinchedMinutesDefaultsToFiveMinutes),
+      ("Skip recently pinched minutes defaults to ten minutes", SkipRecentlyPinchedMinutesDefaultsToTenMinutes),
       ("AutoRetainer IPC state skips missing plugin read", AutoRetainerIpcStateSkipsMissingPluginRead),
       ("AutoRetainer IPC state skips missing plugin write", AutoRetainerIpcStateSkipsMissingPluginWrite),
       ("AutoRetainer IPC state reports read failure", AutoRetainerIpcStateReportsReadFailure),
@@ -213,11 +213,11 @@ internal static class Program
     return Task.CompletedTask;
   }
 
-  private static Task SkipRecentlyPinchedMinutesDefaultsToFiveMinutes()
+  private static Task SkipRecentlyPinchedMinutesDefaultsToTenMinutes()
   {
     var config = JsonConvert.DeserializeObject<Configuration>("""{"Version": 2}""");
 
-    AssertEqual(5, config!.SkipRecentlyPinchedMinutes, "default skip recently pinched minutes");
+    AssertEqual(10, config!.SkipRecentlyPinchedMinutes, "default skip recently pinched minutes");
     return Task.CompletedTask;
   }
 
@@ -1073,7 +1073,7 @@ internal static class Program
   private static Task RecentPinchTrackerSkipWindowSanitizesConfiguredMinutes()
   {
     AssertEqual(TimeSpan.Zero, RecentPinchTracker.GetSkipWindow(-5), "negative minutes window");
-    AssertEqual(TimeSpan.FromMinutes(5), RecentPinchTracker.GetSkipWindow(5), "default minutes window");
+    AssertEqual(TimeSpan.FromMinutes(10), RecentPinchTracker.GetSkipWindow(10), "default minutes window");
     AssertEqual(TimeSpan.FromMinutes(int.MaxValue), RecentPinchTracker.GetSkipWindow(int.MaxValue), "max minutes window");
     return Task.CompletedTask;
   }

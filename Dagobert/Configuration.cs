@@ -116,7 +116,7 @@ public sealed class Configuration : IPluginConfiguration
   /// skip. If every enabled retainer is within the window, the run pinches all
   /// of them again (a deliberate full re-run).
   /// </summary>
-  public int SkipRecentlyPinchedMinutes { get; set; } = 5;
+  public int SkipRecentlyPinchedMinutes { get; set; } = 10;
 
   public List<ulong> SeenRetainers { get; set; } = [];
 
