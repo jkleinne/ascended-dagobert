@@ -22,6 +22,8 @@ internal static class Program
       ("Missing legacy thin market config keeps sale reference defaults", MissingLegacyThinMarketConfigKeepsSaleReferenceDefaults),
       ("Open sale history config defaults to off", OpenSaleHistoryConfigDefaultsToOff),
       ("Open sale history config round-trips through serialization", OpenSaleHistoryConfigRoundTripsThroughSerialization),
+      ("Max raise guard config defaults to off", MaxRaiseGuardConfigDefaultsToOff),
+      ("Max raise guard config round-trips through serialization", MaxRaiseGuardConfigRoundTripsThroughSerialization),
       ("No price reason explains market board request failure", NoPriceReasonExplainsMarketBoardRequestFailure),
       ("No price reason explains missing eligible listings", NoPriceReasonExplainsMissingEligibleListings),
       ("No price reason explains duplicate response", NoPriceReasonExplainsDuplicateResponse),
@@ -225,6 +227,32 @@ internal static class Program
       ?? throw new InvalidOperationException("expected config to round-trip");
 
     AssertEqual(true, roundTripped.OpenSaleHistoryDuringAutoPinch, "open sale history round trip");
+    return Task.CompletedTask;
+  }
+
+  private static Task MaxRaiseGuardConfigDefaultsToOff()
+  {
+    var config = JsonConvert.DeserializeObject<Configuration>(
+      """
+      {
+        "Version": 2
+      }
+      """) ?? throw new InvalidOperationException("expected config to deserialize");
+
+    AssertEqual(false, config.EnableMaxRaiseGuard, "max raise guard default");
+    AssertEqual(100.0f, config.MaxRaisePercentage, "max raise percentage default");
+    return Task.CompletedTask;
+  }
+
+  private static Task MaxRaiseGuardConfigRoundTripsThroughSerialization()
+  {
+    var config = new Configuration { EnableMaxRaiseGuard = true, MaxRaisePercentage = 42.5f };
+
+    var roundTripped = JsonConvert.DeserializeObject<Configuration>(JsonConvert.SerializeObject(config))
+      ?? throw new InvalidOperationException("expected config to round-trip");
+
+    AssertEqual(true, roundTripped.EnableMaxRaiseGuard, "max raise guard round trip");
+    AssertEqual(42.5f, roundTripped.MaxRaisePercentage, "max raise percentage round trip");
     return Task.CompletedTask;
   }
 

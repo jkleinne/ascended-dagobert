@@ -41,6 +41,16 @@ public sealed class Configuration : IPluginConfiguration
 
   public float MaxUndercutPercentage { get; set; } = 100.0f;
 
+  /// <summary>
+  /// When enabled, a computed price that would raise the current asking price by more
+  /// than <see cref="MaxRaisePercentage"/> percent is not applied automatically,
+  /// mirroring how <see cref="MaxUndercutPercentage"/> bounds cuts. Off by default so
+  /// existing behavior is unchanged until the user opts in.
+  /// </summary>
+  public bool EnableMaxRaiseGuard { get; set; } = false;
+
+  public float MaxRaisePercentage { get; set; } = 100.0f;
+
   public bool UndercutSelf { get; set; } = false;
 
   public bool EnableBaitGuard { get; set; } = true;
