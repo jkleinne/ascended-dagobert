@@ -757,6 +757,7 @@ namespace Dagobert
 
     private unsafe bool? SetNewPrice()
     {
+      var isTerminal = true;
       try
       {
         if (_skipCurrentItem)
@@ -803,12 +804,21 @@ namespace Dagobert
           }
         }
         else
+        {
+          // Retryable: the task manager re-invokes until timeout, so the computed
+          // price, baseline, and flow must survive for the retry. Clearing here
+          // would downgrade the retry to a NoComputedPrice run-flow dismissal.
+          isTerminal = false;
           return false;
+        }
       }
       finally
       {
-        ClearCurrentPriceRequestState();
-        _currentFlow = PriceApplicationFlow.AutoPinchRun;
+        if (isTerminal)
+        {
+          ClearCurrentPriceRequestState();
+          _currentFlow = PriceApplicationFlow.AutoPinchRun;
+        }
       }
     }
 
