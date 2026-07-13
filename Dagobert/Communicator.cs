@@ -25,19 +25,7 @@ public static class Communicator
       return;
 
     var dec = oldPrice.Value > newPrice.Value ? "cut" : "increase";
-    var itemPayload = RawItemNameToItemPayload(itemName);
-
-    if (itemPayload != null)
-    {
-      var seString = new SeStringBuilder()
-          .AddItemLink(itemPayload.ItemId, itemPayload.IsHQ)
-          .AddText($": Pinching from {oldPrice.Value:N0} to {newPrice.Value:N0} gil, a {dec} of {MathF.Abs(MathF.Round(cutPercentage, 2))}%")
-          .Build();
-
-      Svc.Chat.Print(seString);
-    }
-    else
-      Svc.Chat.Print($"{itemName}: Pinching from {oldPrice.Value:N0} to {newPrice.Value:N0}, a {dec} of {MathF.Abs(MathF.Round(cutPercentage, 2))}%");
+    PrintItemInfo(itemName, $"Pinching from {oldPrice.Value:N0} to {newPrice.Value:N0} gil, a {dec} of {MathF.Abs(MathF.Round(cutPercentage, 2))}%");
   }
 
   internal static void PrintPricingDebug(string itemName, PricingDebugDetail? debugDetail)
@@ -47,19 +35,7 @@ public static class Communicator
 
     var debugText = PricingMessageFormatter.FormatPricingDebug(debugDetail, DateTimeOffset.UtcNow);
     Svc.Log.Debug($"{itemName}: Pricing debug: {debugText}");
-
-    var itemPayload = RawItemNameToItemPayload(itemName);
-    if (itemPayload != null)
-    {
-      var seString = new SeStringBuilder()
-          .AddItemLink(itemPayload.ItemId, itemPayload.IsHQ)
-          .AddText($": Pricing debug: {debugText}")
-          .Build();
-
-      Svc.Chat.Print(seString);
-    }
-    else
-      Svc.Chat.Print($"{itemName}: Pricing debug: {debugText}");
+    PrintItemInfo(itemName, $"Pricing debug: {debugText}");
   }
 
   private static ItemPayload? RawItemNameToItemPayload(string itemName)
@@ -130,19 +106,7 @@ public static class Communicator
     if (!Plugin.Configuration.ShowErrorsInChat)
       return;
 
-    var itemPayload = RawItemNameToItemPayload(itemName);
-
-    if (itemPayload != null)
-    {
-      var seString = new SeStringBuilder()
-          .AddItemLink(itemPayload.ItemId, itemPayload.IsHQ)
-          .AddText($": Item ignored because it would cut the price by more than {Plugin.Configuration.MaxUndercutPercentage}%")
-          .Build();
-
-      Svc.Chat.PrintError(seString);
-    }
-    else
-      Svc.Chat.PrintError($"{itemName}: Item ignored because it would cut the price by more than {Plugin.Configuration.MaxUndercutPercentage}%");
+    PrintItemError(itemName, $"Item ignored because it would cut the price by more than {Plugin.Configuration.MaxUndercutPercentage}%");
   }
 
   public static void PrintManualPriceRespected(string itemName, int keptPrice)
@@ -244,19 +208,7 @@ public static class Communicator
       return;
 
     var reason = PricingMessageFormatter.FormatNoPriceReason(debugDetail, DateTimeOffset.UtcNow);
-    var message = $"No price set: {reason}. Please set price manually.";
-    var itemPayload = RawItemNameToItemPayload(itemName);
-    if (itemPayload != null)
-    {
-      var seString = new SeStringBuilder()
-          .AddItemLink(itemPayload.ItemId, itemPayload.IsHQ)
-          .AddText($": {message}")
-          .Build();
-
-      Svc.Chat.PrintError(seString);
-    }
-    else
-      Svc.Chat.PrintError($"{itemName}: {message}");
+    PrintItemError(itemName, $"No price set: {reason}. Please set price manually.");
   }
 
     public static void PrintAllRetainersDisabled()
