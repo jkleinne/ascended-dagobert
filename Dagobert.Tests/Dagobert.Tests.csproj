@@ -19,6 +19,7 @@
     <Compile Include="../Dagobert/AutoRetainerIpcState.cs" Link="Production/AutoRetainerIpcState.cs" />
     <Compile Include="../Dagobert/MarketBoardPriceRequestState.cs" Link="Production/MarketBoardPriceRequestState.cs" />
     <Compile Include="../Dagobert/PostPinchWorkflow.cs" Link="Production/PostPinchWorkflow.cs" />
+    <Compile Include="../Dagobert/PriceApplicationPolicy.cs" Link="Production/PriceApplicationPolicy.cs" />
     <Compile Include="../Dagobert/PricingDebugDetail.cs" Link="Production/PricingDebugDetail.cs" />
     <Compile Include="../Dagobert/PricingMessageFormatter.cs" Link="Production/PricingMessageFormatter.cs" />
     <Compile Include="../Dagobert/SaleReference.cs" Link="Production/SaleReference.cs" />

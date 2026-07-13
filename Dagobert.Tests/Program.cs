@@ -54,6 +54,21 @@ internal static class Program
       ("Post pinch workflow ignores busy task manager", PostPinchWorkflowIgnoresBusyTaskManager),
       ("Post pinch workflow ignores disabled feature", PostPinchWorkflowIgnoresDisabledFeature),
       ("Post pinch workflow ignores unavailable sell addon", PostPinchWorkflowIgnoresUnavailableSellAddon),
+      ("Price application applies computed price within caps", PriceApplicationAppliesComputedPriceWithinCaps),
+      ("Price application applies at exact cut cap", PriceApplicationAppliesAtExactCutCap),
+      ("Price application rejects cut above max in run flow", PriceApplicationRejectsCutAboveMaxInRunFlow),
+      ("Price application keeps dialog open for cut above max post pinch", PriceApplicationKeepsDialogOpenForCutAboveMaxPostPinch),
+      ("Price application rejects manual edit in both flows", PriceApplicationRejectsManualEditInBothFlows),
+      ("Price application prefers manual edit over missing computed price", PriceApplicationPrefersManualEditOverMissingComputedPrice),
+      ("Price application treats edited-to-baseline value as unedited", PriceApplicationTreatsEditedToBaselineValueAsUnedited),
+      ("Price application applies without baseline using field value", PriceApplicationAppliesWithoutBaselineUsingFieldValue),
+      ("Price application rejects missing computed price", PriceApplicationRejectsMissingComputedPrice),
+      ("Price application skips guards for non-positive baseline", PriceApplicationSkipsGuardsForNonPositiveBaseline),
+      ("Price application raise guard rejects above cap", PriceApplicationRaiseGuardRejectsAboveCap),
+      ("Price application raise guard allows exact cap", PriceApplicationRaiseGuardAllowsExactCap),
+      ("Price application allows any raise when guard disabled", PriceApplicationAllowsAnyRaiseWhenGuardDisabled),
+      ("Price application options disable raise guard for non-finite values", PriceApplicationOptionsDisableRaiseGuardForNonFiniteValues),
+      ("Price application options default non-finite max undercut", PriceApplicationOptionsDefaultNonFiniteMaxUndercut),
       ("AutoRetainer suppression restores unsuppressed state", AutoRetainerSuppressionRestoresUnsuppressedState),
       ("AutoRetainer suppression restores already suppressed state", AutoRetainerSuppressionRestoresAlreadySuppressedState),
       ("AutoRetainer suppression skips inactive gateway", AutoRetainerSuppressionSkipsInactiveGateway),
@@ -735,6 +750,165 @@ internal static class Program
     AssertEqual(ThinMarketPricingAction.UndercutFloor, decision.Action, "floor nearby action");
     AssertEqual(ThinMarketPricingReason.FloorWithinTolerance, decision.Reason, "floor nearby reason");
     AssertEqual((uint)21000, decision.ReferencePrice, "floor nearby reference price");
+    return Task.CompletedTask;
+  }
+
+  private static PriceApplicationOptions PriceOptions(
+    float maxUndercut = 100.0f,
+    bool enableRaiseGuard = false,
+    float maxRaise = 100.0f,
+    PriceApplicationFlow flow = PriceApplicationFlow.AutoPinchRun)
+    => new(maxUndercut, enableRaiseGuard, maxRaise, flow);
+
+  private static Task PriceApplicationAppliesComputedPriceWithinCaps()
+  {
+    var decision = PriceApplicationPolicy.Decide(900, 1000, 1000, PriceOptions());
+
+    AssertEqual(PriceApplicationAction.ApplyComputedPrice, decision.Action, "apply action");
+    AssertEqual(900, decision.PriceToSet, "applied price");
+    AssertEqual(PriceApplicationReason.Computed, decision.Reason, "apply reason");
+    AssertEqual(-10.0f, decision.ChangePercent, "apply change percent");
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationAppliesAtExactCutCap()
+  {
+    var decision = PriceApplicationPolicy.Decide(900, 1000, 1000, PriceOptions(maxUndercut: 10.0f));
+
+    AssertEqual(PriceApplicationAction.ApplyComputedPrice, decision.Action, "exact cut cap applies");
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationRejectsCutAboveMaxInRunFlow()
+  {
+    var decision = PriceApplicationPolicy.Decide(900, 1000, 1000, PriceOptions(maxUndercut: 9.9f));
+
+    AssertEqual(PriceApplicationAction.RejectDismissDialog, decision.Action, "run cut reject action");
+    AssertEqual(PriceApplicationReason.CutAboveMax, decision.Reason, "run cut reject reason");
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationKeepsDialogOpenForCutAboveMaxPostPinch()
+  {
+    var decision = PriceApplicationPolicy.Decide(
+      900, 1000, 1000, PriceOptions(maxUndercut: 9.9f, flow: PriceApplicationFlow.PostPinch));
+
+    AssertEqual(PriceApplicationAction.RejectKeepDialogOpen, decision.Action, "post pinch cut reject action");
+    AssertEqual(PriceApplicationReason.CutAboveMax, decision.Reason, "post pinch cut reject reason");
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationRejectsManualEditInBothFlows()
+  {
+    var runDecision = PriceApplicationPolicy.Decide(900, 1000, 1234, PriceOptions());
+    AssertEqual(PriceApplicationAction.RejectDismissDialog, runDecision.Action, "run manual edit action");
+    AssertEqual(PriceApplicationReason.ManualEdit, runDecision.Reason, "run manual edit reason");
+
+    var postPinchDecision = PriceApplicationPolicy.Decide(
+      900, 1000, 1234, PriceOptions(flow: PriceApplicationFlow.PostPinch));
+    AssertEqual(PriceApplicationAction.RejectKeepDialogOpen, postPinchDecision.Action, "post pinch manual edit action");
+    AssertEqual(PriceApplicationReason.ManualEdit, postPinchDecision.Reason, "post pinch manual edit reason");
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationPrefersManualEditOverMissingComputedPrice()
+  {
+    var decision = PriceApplicationPolicy.Decide(
+      null, 1000, 1200, PriceOptions(flow: PriceApplicationFlow.PostPinch));
+
+    AssertEqual(PriceApplicationReason.ManualEdit, decision.Reason, "manual edit checked before missing price");
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationTreatsEditedToBaselineValueAsUnedited()
+  {
+    var decision = PriceApplicationPolicy.Decide(900, 1000, 1000, PriceOptions(flow: PriceApplicationFlow.PostPinch));
+
+    AssertEqual(PriceApplicationAction.ApplyComputedPrice, decision.Action, "same-as-baseline applies computed price");
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationAppliesWithoutBaselineUsingFieldValue()
+  {
+    var decision = PriceApplicationPolicy.Decide(900, null, 1000, PriceOptions());
+
+    AssertEqual(PriceApplicationAction.ApplyComputedPrice, decision.Action, "no baseline applies");
+    AssertEqual(-10.0f, decision.ChangePercent, "no baseline change percent from field value");
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationRejectsMissingComputedPrice()
+  {
+    foreach (var computed in new int?[] { null, 0, -1 })
+    {
+      var runDecision = PriceApplicationPolicy.Decide(computed, 1000, 1000, PriceOptions());
+      AssertEqual(PriceApplicationAction.RejectDismissDialog, runDecision.Action, $"run missing price action for {computed}");
+      AssertEqual(PriceApplicationReason.NoComputedPrice, runDecision.Reason, $"run missing price reason for {computed}");
+
+      var postPinchDecision = PriceApplicationPolicy.Decide(
+        computed, 1000, 1000, PriceOptions(flow: PriceApplicationFlow.PostPinch));
+      AssertEqual(PriceApplicationAction.RejectKeepDialogOpen, postPinchDecision.Action, $"post pinch missing price action for {computed}");
+    }
+
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationSkipsGuardsForNonPositiveBaseline()
+  {
+    var decision = PriceApplicationPolicy.Decide(
+      500, 0, 0, PriceOptions(maxUndercut: 0.1f, enableRaiseGuard: true, maxRaise: 0.1f));
+
+    AssertEqual(PriceApplicationAction.ApplyComputedPrice, decision.Action, "non-positive baseline skips guards");
+    AssertEqual(0.0f, decision.ChangePercent, "non-positive baseline change percent");
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationRaiseGuardRejectsAboveCap()
+  {
+    var decision = PriceApplicationPolicy.Decide(
+      1501, 1000, 1000, PriceOptions(enableRaiseGuard: true, maxRaise: 50.0f));
+
+    AssertEqual(PriceApplicationAction.RejectDismissDialog, decision.Action, "raise above cap action");
+    AssertEqual(PriceApplicationReason.RaiseAboveMax, decision.Reason, "raise above cap reason");
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationRaiseGuardAllowsExactCap()
+  {
+    var decision = PriceApplicationPolicy.Decide(
+      1500, 1000, 1000, PriceOptions(enableRaiseGuard: true, maxRaise: 50.0f));
+
+    AssertEqual(PriceApplicationAction.ApplyComputedPrice, decision.Action, "exact raise cap applies");
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationAllowsAnyRaiseWhenGuardDisabled()
+  {
+    var decision = PriceApplicationPolicy.Decide(100000, 10, 10, PriceOptions());
+
+    AssertEqual(PriceApplicationAction.ApplyComputedPrice, decision.Action, "guard disabled allows raise");
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationOptionsDisableRaiseGuardForNonFiniteValues()
+  {
+    foreach (var maxRaise in new[] { float.NaN, float.PositiveInfinity, float.NegativeInfinity, -5.0f, 0.0f })
+    {
+      var options = PriceApplicationOptions.FromConfig(100.0f, true, maxRaise, PriceApplicationFlow.AutoPinchRun);
+      AssertEqual(false, options.EnableMaxRaiseGuard, $"raise guard disabled for {maxRaise}");
+
+      var decision = PriceApplicationPolicy.Decide(100000, 10, 10, options);
+      AssertEqual(PriceApplicationAction.ApplyComputedPrice, decision.Action, $"huge raise applies for {maxRaise}");
+    }
+
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationOptionsDefaultNonFiniteMaxUndercut()
+  {
+    var options = PriceApplicationOptions.FromConfig(float.NaN, false, 100.0f, PriceApplicationFlow.AutoPinchRun);
+
+    AssertEqual(100.0f, options.MaxUndercutPercentage, "non-finite max undercut defaults");
     return Task.CompletedTask;
   }
 
