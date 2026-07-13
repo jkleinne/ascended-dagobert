@@ -1173,6 +1173,9 @@ namespace Dagobert
 
     private void ClearCurrentPriceRequestState()
     {
+      // _currentFlow is deliberately not reset here: ClickComparePriceFresh clears
+      // request state in the middle of a post-pinch chain, and resetting the flow
+      // would downgrade the pending SetNewPrice to run-flow dismissal.
       _baselinePrice = null;
       _newPrice = null;
       _pricingDebugDetail = null;

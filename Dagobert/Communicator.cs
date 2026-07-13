@@ -150,20 +150,7 @@ public static class Communicator
     if (!Plugin.Configuration.ShowPriceAdjustmentsMessages)
       return;
 
-    var message = $"Manual price of {keptPrice:N0} gil respected; finish and confirm it manually";
-    var itemPayload = RawItemNameToItemPayload(itemName);
-
-    if (itemPayload != null)
-    {
-      var seString = new SeStringBuilder()
-          .AddItemLink(itemPayload.ItemId, itemPayload.IsHQ)
-          .AddText($": {message}")
-          .Build();
-
-      Svc.Chat.Print(seString);
-    }
-    else
-      Svc.Chat.Print($"{itemName}: {message}");
+    PrintItemInfo(itemName, $"Manual price of {keptPrice:N0} gil respected; finish and confirm it manually");
   }
 
   public static void PrintManualEditSkipped(string itemName)
@@ -171,20 +158,7 @@ public static class Communicator
     if (!Plugin.Configuration.ShowErrorsInChat)
       return;
 
-    var message = "Item skipped because its price field was edited during the run; the listing keeps its previous price";
-    var itemPayload = RawItemNameToItemPayload(itemName);
-
-    if (itemPayload != null)
-    {
-      var seString = new SeStringBuilder()
-          .AddItemLink(itemPayload.ItemId, itemPayload.IsHQ)
-          .AddText($": {message}")
-          .Build();
-
-      Svc.Chat.PrintError(seString);
-    }
-    else
-      Svc.Chat.PrintError($"{itemName}: {message}");
+    PrintItemError(itemName, "Item skipped because its price field was edited during the run; the listing keeps its previous price");
   }
 
   public static void PrintAboveMaxRaiseError(string itemName)
@@ -192,18 +166,35 @@ public static class Communicator
     if (!Plugin.Configuration.ShowErrorsInChat)
       return;
 
-    var message = $"Item ignored because it would raise the price by more than {Plugin.Configuration.MaxRaisePercentage}%";
+    PrintItemError(itemName, $"Item ignored because it would raise the price by more than {Plugin.Configuration.MaxRaisePercentage}%");
+  }
+
+  private static SeString? BuildItemLinkMessage(string itemName, string message)
+  {
     var itemPayload = RawItemNameToItemPayload(itemName);
+    if (itemPayload == null)
+      return null;
 
-    if (itemPayload != null)
-    {
-      var seString = new SeStringBuilder()
-          .AddItemLink(itemPayload.ItemId, itemPayload.IsHQ)
-          .AddText($": {message}")
-          .Build();
+    return new SeStringBuilder()
+        .AddItemLink(itemPayload.ItemId, itemPayload.IsHQ)
+        .AddText($": {message}")
+        .Build();
+  }
 
+  private static void PrintItemInfo(string itemName, string message)
+  {
+    var seString = BuildItemLinkMessage(itemName, message);
+    if (seString != null)
+      Svc.Chat.Print(seString);
+    else
+      Svc.Chat.Print($"{itemName}: {message}");
+  }
+
+  private static void PrintItemError(string itemName, string message)
+  {
+    var seString = BuildItemLinkMessage(itemName, message);
+    if (seString != null)
       Svc.Chat.PrintError(seString);
-    }
     else
       Svc.Chat.PrintError($"{itemName}: {message}");
   }

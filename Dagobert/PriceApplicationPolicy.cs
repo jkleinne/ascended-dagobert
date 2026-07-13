@@ -69,6 +69,8 @@ internal readonly record struct PriceApplicationDecision(
 /// a price it did not compute, because a manual value may be mid-keystroke. Rejects
 /// route per flow — the post-pinch flow leaves the dialog open for manual pricing,
 /// the full auto-pinch run dismisses it so the run continues.
+/// Manual-edit detection requires a captured baseline: when <c>baselinePrice</c> is
+/// null the guard cannot fire and the computed price applies against the field value.
 /// </summary>
 internal static class PriceApplicationPolicy
 {
