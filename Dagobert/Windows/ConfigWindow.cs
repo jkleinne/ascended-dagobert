@@ -103,6 +103,41 @@ public sealed class ConfigWindow : Window
       ImGui.EndTooltip();
     }
 
+    var enableMaxRaiseGuard = Plugin.Configuration.EnableMaxRaiseGuard;
+    if (ImGui.Checkbox("Enable max raise guard", ref enableMaxRaiseGuard))
+    {
+      Plugin.Configuration.EnableMaxRaiseGuard = enableMaxRaiseGuard;
+      Plugin.Configuration.Save();
+    }
+    if (ImGui.IsItemHovered())
+    {
+      ImGui.BeginTooltip();
+      ImGui.SetTooltip("If checked, prices that would raise the current asking price by more than the configured percentage are not applied automatically");
+      ImGui.EndTooltip();
+    }
+
+    if (Plugin.Configuration.EnableMaxRaiseGuard)
+    {
+      ImGui.BeginGroup();
+      ImGui.Text("Max Raise percentage:");
+      ImGui.SameLine();
+      float maxRaise = Plugin.Configuration.MaxRaisePercentage;
+      if (ImGui.InputFloat("##maximumRaisePercentage", ref maxRaise, 0.5f, 1.0f, "%.1f"))
+      {
+        Plugin.Configuration.MaxRaisePercentage = Math.Clamp(MathF.Round(maxRaise, 1), 0.1f, 1000.0f);
+        Plugin.Configuration.Save();
+      }
+      ImGui.SameLine();
+      ImGui.Text($"%");
+      ImGui.EndGroup();
+      if (ImGui.IsItemHovered())
+      {
+        ImGui.BeginTooltip();
+        ImGui.SetTooltip("Sets the max percentage a price may be raised automatically.\r\nRaises above 100% are legitimate for cheap items, so the range is wider than the undercut limit.");
+        ImGui.EndTooltip();
+      }
+    }
+
     var undercutSelf = Plugin.Configuration.UndercutSelf;
     if (ImGui.Checkbox("Undercut Self", ref undercutSelf))
     {
