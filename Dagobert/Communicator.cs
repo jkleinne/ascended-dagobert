@@ -145,6 +145,69 @@ public static class Communicator
       Svc.Chat.PrintError($"{itemName}: Item ignored because it would cut the price by more than {Plugin.Configuration.MaxUndercutPercentage}%");
   }
 
+  public static void PrintManualPriceRespected(string itemName, int keptPrice)
+  {
+    if (!Plugin.Configuration.ShowPriceAdjustmentsMessages)
+      return;
+
+    var message = $"Manual price of {keptPrice:N0} gil respected; finish and confirm it manually";
+    var itemPayload = RawItemNameToItemPayload(itemName);
+
+    if (itemPayload != null)
+    {
+      var seString = new SeStringBuilder()
+          .AddItemLink(itemPayload.ItemId, itemPayload.IsHQ)
+          .AddText($": {message}")
+          .Build();
+
+      Svc.Chat.Print(seString);
+    }
+    else
+      Svc.Chat.Print($"{itemName}: {message}");
+  }
+
+  public static void PrintManualEditSkipped(string itemName)
+  {
+    if (!Plugin.Configuration.ShowErrorsInChat)
+      return;
+
+    var message = "Item skipped because its price field was edited during the run; the listing keeps its previous price";
+    var itemPayload = RawItemNameToItemPayload(itemName);
+
+    if (itemPayload != null)
+    {
+      var seString = new SeStringBuilder()
+          .AddItemLink(itemPayload.ItemId, itemPayload.IsHQ)
+          .AddText($": {message}")
+          .Build();
+
+      Svc.Chat.PrintError(seString);
+    }
+    else
+      Svc.Chat.PrintError($"{itemName}: {message}");
+  }
+
+  public static void PrintAboveMaxRaiseError(string itemName)
+  {
+    if (!Plugin.Configuration.ShowErrorsInChat)
+      return;
+
+    var message = $"Item ignored because it would raise the price by more than {Plugin.Configuration.MaxRaisePercentage}%";
+    var itemPayload = RawItemNameToItemPayload(itemName);
+
+    if (itemPayload != null)
+    {
+      var seString = new SeStringBuilder()
+          .AddItemLink(itemPayload.ItemId, itemPayload.IsHQ)
+          .AddText($": {message}")
+          .Build();
+
+      Svc.Chat.PrintError(seString);
+    }
+    else
+      Svc.Chat.PrintError($"{itemName}: {message}");
+  }
+
   public static void PrintRetainerName(string name)
   {
     if (!Plugin.Configuration.ShowRetainerNames)

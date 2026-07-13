@@ -31,7 +31,8 @@ namespace Dagobert
   internal sealed class AutoPinch : Window, IDisposable
   {
     private readonly MarketBoardHandler _mbHandler;
-    private int? _oldPrice;
+    private int? _baselinePrice;
+    private PriceApplicationFlow _currentFlow = PriceApplicationFlow.AutoPinchRun;
     private int? _newPrice;
     private PricingDebugDetail? _pricingDebugDetail;
     private bool _skipCurrentItem = false;
@@ -704,6 +705,7 @@ namespace Dagobert
 
       if (GenericHelpers.TryGetAddonByName<AddonRetainerSell>("RetainerSell", out var addon) && GenericHelpers.IsAddonReady(&addon->AtkUnitBase))
       {
+        _baselinePrice = addon->AskingPrice->Value;
         // if we have a cached price, dont click compare
         var itemName = addon->ItemName->NodeText.ToString();
         if (_cachedPrices.TryGetValue(itemName, out int? value) && value > 0)
@@ -744,6 +746,7 @@ namespace Dagobert
           itemName,
           _mbHandler.IsPricePending);
         ClearCurrentPriceRequestState();
+        _baselinePrice = addon->AskingPrice->Value;
         _mbHandler.PrepareForPriceRequest();
         ECommons.Automation.Callback.Fire(&addon->AtkUnitBase, true, ComparePricesCallbackId);
         return true;
@@ -767,44 +770,36 @@ namespace Dagobert
         {
           var ui = &retainerSell->AtkUnitBase;
           var itemName = retainerSell->ItemName->NodeText.ToString();
-          _oldPrice = retainerSell->AskingPrice->Value;
-          if (_newPrice.HasValue && _newPrice > 0)
-          {
-            var cutPercentage = ((float)_newPrice.Value - _oldPrice.Value) / _oldPrice.Value * 100f;
-            if (cutPercentage >= -Plugin.Configuration.MaxUndercutPercentage)
-            {
-              Svc.Log.Debug($"Setting new price");
-              _cachedPrices.TryAdd(itemName, _newPrice);
-              retainerSell->AskingPrice->SetValue(_newPrice.Value);
-              Communicator.PrintPriceUpdate(itemName, _oldPrice.Value, _newPrice.Value, cutPercentage);
-              Communicator.PrintPricingDebug(itemName, _pricingDebugDetail);
-            }
-            else
-            {
-              Communicator.PrintAboveMaxCutError(itemName);
-              Communicator.PrintPricingDebug(itemName, _pricingDebugDetail);
-            }
+          var currentFieldValue = retainerSell->AskingPrice->Value;
+          var options = PriceApplicationOptions.FromConfig(
+            Plugin.Configuration.MaxUndercutPercentage,
+            Plugin.Configuration.EnableMaxRaiseGuard,
+            Plugin.Configuration.MaxRaisePercentage,
+            _currentFlow);
+          var decision = PriceApplicationPolicy.Decide(_newPrice, _baselinePrice, currentFieldValue, options);
 
-            ECommons.Automation.Callback.Fire(&retainerSell->AtkUnitBase, true, 0); // confirm
-            ui->Close(true);
-
-            return true;
-          }
-          else
+          switch (decision.Action)
           {
-            Svc.Log.Warning(
-              "{ItemName}: no price to set, old price {OldPrice}, received price {NewPrice}, pending market board request {IsPricePending}, skip current item {SkipCurrentItem}, pricing reason {PricingReason}",
-              itemName,
-              _oldPrice,
-              _newPrice,
-              _mbHandler.IsPricePending,
-              _skipCurrentItem,
-              _pricingDebugDetail?.Reason);
-            Communicator.PrintNoPriceToSetError(itemName, _pricingDebugDetail);
-            Communicator.PrintPricingDebug(itemName, _pricingDebugDetail);
-            ECommons.Automation.Callback.Fire(&retainerSell->AtkUnitBase, true, 1); // cancel
-            ui->Close(true);
-            return true;
+            case PriceApplicationAction.ApplyComputedPrice:
+              _cachedPrices.TryAdd(itemName, decision.PriceToSet);
+              retainerSell->AskingPrice->SetValue(decision.PriceToSet);
+              Communicator.PrintPriceUpdate(itemName, _baselinePrice ?? currentFieldValue, decision.PriceToSet, decision.ChangePercent);
+              Communicator.PrintPricingDebug(itemName, _pricingDebugDetail);
+              ECommons.Automation.Callback.Fire(ui, true, 0); // confirm
+              ui->Close(true);
+              return true;
+            case PriceApplicationAction.RejectKeepDialogOpen:
+              LogPriceRejected(itemName, decision, currentFieldValue);
+              PrintRejectMessages(itemName, decision, currentFieldValue);
+              return true;
+            case PriceApplicationAction.RejectDismissDialog:
+              LogPriceRejected(itemName, decision, currentFieldValue);
+              PrintRejectMessages(itemName, decision, currentFieldValue);
+              ECommons.Automation.Callback.Fire(ui, true, 1); // cancel
+              ui->Close(true);
+              return true;
+            default:
+              throw new ArgumentOutOfRangeException(nameof(decision), decision.Action, null);
           }
         }
         else
@@ -813,7 +808,52 @@ namespace Dagobert
       finally
       {
         ClearCurrentPriceRequestState();
+        _currentFlow = PriceApplicationFlow.AutoPinchRun;
       }
+    }
+
+    private void LogPriceRejected(string itemName, PriceApplicationDecision decision, int currentFieldValue)
+    {
+      Svc.Log.Warning(
+        "{ItemName}: price not applied, action {Action}, reason {Reason}, computed {ComputedPrice}, baseline {BaselinePrice}, field {FieldValue}, pricing reason {PricingReason}",
+        itemName,
+        decision.Action,
+        decision.Reason,
+        _newPrice,
+        _baselinePrice,
+        currentFieldValue,
+        _pricingDebugDetail?.Reason);
+    }
+
+    private void PrintRejectMessages(string itemName, PriceApplicationDecision decision, int currentFieldValue)
+    {
+      var keptDialogOpen = decision.Action == PriceApplicationAction.RejectKeepDialogOpen;
+      switch (decision.Reason)
+      {
+        case PriceApplicationReason.ManualEdit:
+          if (keptDialogOpen)
+            Communicator.PrintManualPriceRespected(itemName, currentFieldValue);
+          else
+            Communicator.PrintManualEditSkipped(itemName);
+          break;
+        case PriceApplicationReason.NoComputedPrice:
+          Communicator.PrintNoPriceToSetError(itemName, _pricingDebugDetail);
+          break;
+        case PriceApplicationReason.CutAboveMax:
+          Communicator.PrintAboveMaxCutError(itemName);
+          break;
+        case PriceApplicationReason.RaiseAboveMax:
+          Communicator.PrintAboveMaxRaiseError(itemName);
+          break;
+        case PriceApplicationReason.Computed:
+          // Unreachable: both call sites pass reject decisions only. Present so the
+          // switch stays total if a new reason is added.
+          break;
+        default:
+          throw new ArgumentOutOfRangeException(nameof(decision), decision.Reason, null);
+      }
+
+      Communicator.PrintPricingDebug(itemName, _pricingDebugDetail);
     }
 
     private void MBHandler_NewPriceReceived(object? sender, NewPriceEventArgs e)
@@ -854,6 +894,8 @@ namespace Dagobert
 
       if (actions.Count == 0)
         return;
+
+      _currentFlow = PriceApplicationFlow.PostPinch;
 
       Svc.Log.Debug(
         "Post pinch key {PostPinchKey} detected, enqueueing posted price update tasks",
@@ -900,6 +942,16 @@ namespace Dagobert
 
       foreach (var action in actions)
         ExecutePostPinchWorkflowAction(action);
+
+      // PlanActions returns actions only when the sell addon is ready, and this trigger's
+      // plan contains no compare-click task, so this is the one point where the
+      // SHIFT+Compare trigger can record its pre-edit baseline. The PreparePriceRequest
+      // action just cleared request state, so capturing earlier would be discarded.
+      if (actions.Count > 0)
+      {
+        _currentFlow = PriceApplicationFlow.PostPinch;
+        _baselinePrice = addon->AskingPrice->Value;
+      }
     }
 
     private void ExecutePostPinchWorkflowAction(PostPinchWorkflowAction action)
@@ -1111,6 +1163,8 @@ namespace Dagobert
     private void ClearState()
     {
       _newPrice = null;
+      _baselinePrice = null;
+      _currentFlow = PriceApplicationFlow.AutoPinchRun;
       _pricingDebugDetail = null;
       _cachedPrices = [];
       _skipCurrentItem = false;
@@ -1119,7 +1173,7 @@ namespace Dagobert
 
     private void ClearCurrentPriceRequestState()
     {
-      _oldPrice = null;
+      _baselinePrice = null;
       _newPrice = null;
       _pricingDebugDetail = null;
       _skipCurrentItem = false;
