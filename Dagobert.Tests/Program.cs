@@ -71,6 +71,8 @@ internal static class Program
       ("Price application allows any raise when guard disabled", PriceApplicationAllowsAnyRaiseWhenGuardDisabled),
       ("Price application options disable raise guard for non-finite values", PriceApplicationOptionsDisableRaiseGuardForNonFiniteValues),
       ("Price application options default non-finite max undercut", PriceApplicationOptionsDefaultNonFiniteMaxUndercut),
+      ("Price application options preserve valid raise guard values", PriceApplicationOptionsPreserveValidRaiseGuardValues),
+      ("Price application applies unchanged price with zero change percent", PriceApplicationAppliesUnchangedPriceWithZeroChangePercent),
       ("AutoRetainer suppression restores unsuppressed state", AutoRetainerSuppressionRestoresUnsuppressedState),
       ("AutoRetainer suppression restores already suppressed state", AutoRetainerSuppressionRestoresAlreadySuppressedState),
       ("AutoRetainer suppression skips inactive gateway", AutoRetainerSuppressionSkipsInactiveGateway),
@@ -934,9 +936,34 @@ internal static class Program
 
   private static Task PriceApplicationOptionsDefaultNonFiniteMaxUndercut()
   {
-    var options = PriceApplicationOptions.FromConfig(float.NaN, false, 100.0f, PriceApplicationFlow.AutoPinchRun);
+    foreach (var maxUndercut in new[] { float.NaN, float.PositiveInfinity, float.NegativeInfinity })
+    {
+      var options = PriceApplicationOptions.FromConfig(maxUndercut, false, 100.0f, PriceApplicationFlow.AutoPinchRun);
 
-    AssertEqual(100.0f, options.MaxUndercutPercentage, "non-finite max undercut defaults");
+      AssertEqual(100.0f, options.MaxUndercutPercentage, $"non-finite max undercut defaults for {maxUndercut}");
+    }
+
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationOptionsPreserveValidRaiseGuardValues()
+  {
+    var options = PriceApplicationOptions.FromConfig(50.0f, true, 25.0f, PriceApplicationFlow.PostPinch);
+
+    AssertEqual(50.0f, options.MaxUndercutPercentage, "valid max undercut preserved");
+    AssertEqual(true, options.EnableMaxRaiseGuard, "valid raise guard stays enabled");
+    AssertEqual(25.0f, options.MaxRaisePercentage, "valid max raise preserved");
+    AssertEqual(PriceApplicationFlow.PostPinch, options.Flow, "flow preserved");
+    return Task.CompletedTask;
+  }
+
+  private static Task PriceApplicationAppliesUnchangedPriceWithZeroChangePercent()
+  {
+    var decision = PriceApplicationPolicy.Decide(
+      1000, 1000, 1000, PriceOptions(maxUndercut: 0.1f, enableRaiseGuard: true, maxRaise: 0.1f));
+
+    AssertEqual(PriceApplicationAction.ApplyComputedPrice, decision.Action, "unchanged price applies");
+    AssertEqual(0.0f, decision.ChangePercent, "unchanged price change percent");
     return Task.CompletedTask;
   }
 
