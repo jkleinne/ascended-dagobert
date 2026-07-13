@@ -38,6 +38,20 @@ Defaults: max 2 listings, 40% tolerance, 3 recent sales, 30-day sale age.
 
 Enable `Show Pricing Debug` in the config window when you want to see why a price was selected or skipped. Debug lines appear in chat and in the plugin log, including whether Universalis was consulted, the average sale price returned, recent sale count, newest sale age, current floor, and the selected target price.
 
+### Manual Price Operations
+
+Upstream Dagobert overwrites whatever is in the asking-price field once its workflow fires, which turns a hand-typed price into the bot's price, and a pricing rejection cancels the dialog outright, which discards a listing you were about to post. This fork makes manual input win: the bot never overwrites or confirms a price it did not compute.
+
+Three behaviors apply:
+
+1. **Typed prices are respected.** If the asking-price field changed after the pricing workflow started, the bot leaves your value alone. With the post-pinch key the dialog stays open for you to finish and confirm; during a full auto-pinch run the item is skipped and the listing keeps its previous price (a mid-run edit is deliberate interaction, announced in chat).
+2. **Rejections leave the dialog open.** When pricing is rejected in the post-pinch flow (bait guard, thin market, failed market board request), the price dialog now stays open so you can set a price by hand instead of losing the listing. Full runs keep the old skip-and-continue behavior so the run never stalls.
+3. **Max raise guard (opt-in).** Mirrors "Max Undercut percentage" in the upward direction: a computed price that would raise the current asking price by more than the configured percentage is treated like a rejection instead of being applied. Off by default; raises above 100% are legitimate for cheap items, so the limit accepts up to 1000%.
+
+Outcomes are reported through the existing chat toggles (`Show Price Adjustment Messages` for respected manual prices, `Show Errors In Chat` for skips and guard rejections), and `Show Pricing Debug` still explains every decision.
+
+Defaults: raise guard off, 100% max raise.
+
 ### Resume After Timeout
 
 A full "Auto Pinch" run aborts when a step times out (a slow market board response, a missed context menu). Upstream restarts from the first retainer on relaunch, repeating work it already finished. This fork remembers which retainers completed a full pinch and, when relaunched within the skip window, continues with the ones that are left — the retainer that was mid-pinch when the run stopped starts over from its first item.
